@@ -1,21 +1,37 @@
-# Model files (too large for git)
+# ============================================
+# Alex Voice — .gitignore
+# No subir modelos LLM ni binarios descargables
+# ============================================
+
+# Modelos GGUF (grandes, descargar manualmente)
 *.gguf
 *.bin
 *.safetensors
 
-# llama.cpp binaries (too large, installed separately)
+# llama.cpp (instalado aparte)
 llama.cpp/
 
-# Piper large binaries
-bin/piper/onnxruntime.dll
-bin/piper/onnxruntime_providers_shared.dll
-bin/piper/espeak-ng.dll
+# Piper TTS (binarios descargables)
+bin/piper/*.dll
+bin/piper/*.exe
 bin/piper/espeak-ng-data/
-bin/piper/piper_phonemize.dll
+bin/piper/libtashkeel*
+bin/piper/*.ort
+bin/piper/piper/
+bin/piper/piper_phonemize*
 
-# Downloads
-llama-models/
+# Whisper
+models/ggml-*.bin
+
+# Descargas
 *.zip
+*.tar.gz
+
+# Cache y temporales
+/tmp/
+tmp/
+*.log
+*.cache
 
 # OS
 .DS_Store
@@ -32,8 +48,3 @@ __pycache__/
 *.pyo
 venv/
 .env
-
-# Temp
-/tmp/
-*.tmp
-*.log

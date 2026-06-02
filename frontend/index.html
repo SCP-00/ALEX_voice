@@ -435,7 +435,7 @@ async function send() {
   document.getElementById('sendBtn').disabled = true;
 
   try {
-    const serverUrl = document.getElementById('serverUrl')?.value || 'http://localhost:8080';
+    const serverUrl = document.getElementById('serverUrl')?.value || 'http://localhost:8081';
     const config = MODES[currentMode];
 
     // Formatear prompt con el template de Qwen (ChatML)

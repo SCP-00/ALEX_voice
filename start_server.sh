@@ -3,13 +3,13 @@
 # Alex Voice — Start llama-server
 # ====================================
 # Uso: ./start_server.sh [modelo] [puerto]
-# Por defecto: Qwen3.5-2B-Q8 en puerto 8080
+# Por defecto: Qwen3.5-2B-Q8 en puerto 8081
 
 LLAMA_DIR="/c/Users/andyh/Documents/llama-b9479-bin-win-cuda-13.3-x64"
 MODELS_DIR="/c/Users/andyh/.lmstudio/models"
 
 MODEL="${1:-$MODELS_DIR/khazarai/Qwen3.5-2B-Qwen3.6-plus-Distilled-GGUF/Qwen3.5-2B-Qwen3.6-plus-Distilled-q8_0.gguf}"
-PORT="${2:-8080}"
+PORT="${2:-8081}"
 
 echo "========================================="
 echo "  Alex Voice — Iniciando llama-server"
