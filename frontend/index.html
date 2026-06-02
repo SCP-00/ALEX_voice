@@ -438,17 +438,20 @@ async function send() {
     const serverUrl = document.getElementById('serverUrl')?.value || 'http://localhost:8080';
     const config = MODES[currentMode];
 
+    // Formatear prompt con el template de Qwen (ChatML)
+    const prompt = `<|im_start|>system\n${config.sysPrompt}<|im_end|>\n<|im_start|>user\n${text}<|im_end|>\n<|im_start|>assistant\n`;
+
     const response = await fetch(`${serverUrl}/completion`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        prompt: `${config.sysPrompt}\n\nUsuario: ${text}\nAsistente:`,
+        prompt: prompt,
         n_predict: 256,
         temperature: currentMode === 'teacher' ? 0.5 : currentMode === 'translator' ? 0.3 : 0.7,
         top_k: 40,
         top_p: 0.9,
         repeat_penalty: 1.1,
-        stop: ['\nUsuario:', '\nUsario:', '<|im_end|>'],
+        stop: ['<|im_end|>', '<|im_start|>'],
         stream: false
       })
     });
