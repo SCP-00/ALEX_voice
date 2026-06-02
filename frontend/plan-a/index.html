@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Plan A — Alex Voice (Combined GPU)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0a0015;--surface:#120026;--surface2:#1e0040;--border:#3a0077;--text:#e8d0ff;--textDim:#9a7fbf;--accent:#b44aff;--accent2:#7c3aed;--glow:rgba(180,74,255,.3)}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Space Grotesk',sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;overflow:hidden}
+.sidebar{width:260px;background:var(--surface);border-right:1px solid var(--border);padding:24px 16px;display:flex;flex-direction:column;flex-shrink:0}
+.logo{font-family:'Syne',sans-serif;font-size:22px;font-weight:800;margin-bottom:8px;background:linear-gradient(135deg,var(--accent),#e040ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.plan-badge{font-size:10px;text-transform:uppercase;letter-spacing:2px;color:var(--accent);margin-bottom:32px;padding:4px 10px;border:1px solid var(--accent);border-radius:20px;display:inline-block}
+.mode-group{display:flex;flex-direction:column;gap:6px;flex:1}
+.mode-btn{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:10px;border:1px solid transparent;cursor:pointer;background:transparent;color:var(--textDim);font-family:inherit;font-size:13px;font-weight:500;transition:all .3s;text-align:left}
+.mode-btn:hover{color:var(--text);background:var(--surface2)}
+.mode-btn.active{border-color:var(--accent);color:var(--text);background:var(--surface2);box-shadow:0 0 15px var(--glow)}
+.main{flex:1;display:flex;flex-direction:column}
+.header{padding:16px 28px;border-bottom:1px solid var(--border);background:var(--surface);display:flex;align-items:center;justify-content:space-between}
+.header h2{font-family:'Syne',sans-serif;font-size:16px}
+.vram-bar{padding:8px 16px;background:rgba(180,74,255,.1);border:1px solid var(--border);border-radius:8px;font-size:11px;display:flex;align-items:center;gap:12px;margin-bottom:16px}
+.vram-bar .bar{flex:1;height:6px;background:var(--surface2);border-radius:3px;overflow:hidden}
+.vram-bar .fill{height:100%;background:linear-gradient(90deg,var(--accent),#e040ff);border-radius:3px;width:67%}
+.messages{flex:1;overflow-y:auto;padding:20px 28px;display:flex;flex-direction:column;gap:12px}
+.msg{max-width:75%;padding:12px 16px;border-radius:14px;font-size:13px;line-height:1.6;animation:fadeIn .3s}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.msg.user{align-self:flex-end;background:linear-gradient(135deg,var(--accent2),var(--accent));color:#fff;border-bottom-right-radius:4px}
+.msg.assistant{align-self:flex-start;background:var(--surface2);border:1px solid var(--border);border-bottom-left-radius:4px}
+.msg .ts{font-size:10px;color:var(--textDim);margin-top:4px;opacity:.5}
+.think-indicator{align-self:flex-start;display:none;gap:4px;padding:12px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:14px}
+.think-indicator.show{display:flex}
+.think-indicator span{width:5px;height:5px;border-radius:50%;background:var(--accent);animation:bounce 1.4s infinite}
+.think-indicator span:nth-child(2){animation-delay:.2s}
+.think-indicator span:nth-child(3){animation-delay:.4s}
+@keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-5px)}}
+.input-area{padding:16px 28px;border-top:1px solid var(--border);background:var(--surface)}
+.input-row{display:flex;gap:10px}
+textarea{flex:1;padding:12px 16px;border:1px solid var(--border);border-radius:12px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:13px;resize:none;outline:none;min-height:48px}
+textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--glow)}
+.send-btn{width:48px;height:48px;border-radius:12px;border:none;cursor:pointer;background:linear-gradient(135deg,var(--accent2),var(--accent));color:#fff;font-size:18px;transition:all .3s;flex-shrink:0}
+.send-btn:hover{box-shadow:0 0 20px var(--glow)}
+.send-btn:disabled{opacity:.3;cursor:not-allowed}
+</style>
+</head>
+<body>
+<div class="sidebar">
+  <div class="logo">AlexVoice</div>
+  <div class="plan-badge">Plan A · GPU Combined</div>
+  <div class="mode-group" id="modeGroup">
+    <button class="mode-btn active" data-mode="teacher" onclick="setMode('teacher')"><div><strong>🎓 Teacher</strong><br><span style="font-size:10px;color:var(--textDim)">Explicaciones</span></div></button>
+    <button class="mode-btn" data-mode="conversation" onclick="setMode('conversation')"><div><strong>💬 Conversación</strong><br><span style="font-size:10px;color:var(--textDim)">Charla natural</span></div></button>
+    <button class="mode-btn" data-mode="translator" onclick="setMode('translator')"><div><strong>🌍 Traductor</strong><br><span style="font-size:10px;color:var(--textDim)">ES/EN/JA</span></div></button>
+  </div>
+  <div class="vram-bar">💾 <div class="bar"><div class="fill"></div></div> 3.5/5.3 GB</div>
+</div>
+<div class="main">
+  <div class="header"><h2 id="modeTitle">🎓 Plan A — LLM + TTS en GPU</h2><span style="font-size:11px;color:var(--textDim)" id="modeBadge">Teacher Mode</span></div>
+  <div class="messages" id="msgs"><div class="msg assistant">Plan A: Qwen3.5-2B-Q8 (21 tok/s) + OuteTTS-500M = ~3.5 GB VRAM.<div class="ts">Alex Voice · Plan A</div></div></div>
+  <div class="think-indicator" id="think"><span></span><span></span><span></span></div>
+  <div class="input-area">
+    <div class="input-row">
+      <textarea id="input" placeholder="Escribe..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
+      <button class="send-btn" id="sendBtn" onclick="send()">➤</button>
+    </div>
+  </div>
+</div>
+<script>
+const MODES={teacher:{name:'🎓 Teacher',badge:'Teacher Mode',sys:'Eres un tutor experto que explica conceptos con claridad. Responde en el idioma del usuario.'},conversation:{name:'💬 Conversación',badge:'Conversation Mode',sys:'Eres un asistente amigable y natural. Respondes en el mismo idioma. Conversación fluida.'},translator:{name:'🌍 Traductor',badge:'Translator Mode',sys:'Eres un traductor profesional ES/EN/JA. Traduce y explica. Incluye romaji para japones.'}};
+let currentMode='teacher';
+function setMode(m){currentMode=m;const c=MODES[m];document.getElementById('modeTitle').textContent='🎓 Plan A — '+c.name;document.getElementById('modeBadge').textContent=c.badge;document.querySelectorAll('.mode-btn').forEach(b=>b.classList.remove('active'));document.querySelector(`[data-mode="${m}"]`).classList.add('active')}
+function addMsg(role,text){const d=document.createElement('div');d.className='msg '+role;d.textContent=text;const t=document.createElement('div');t.className='ts';t.textContent=new Date().toLocaleTimeString();d.appendChild(t);document.getElementById('msgs').appendChild(d);d.scrollIntoView({behavior:'smooth'})}
+async function send(){const i=document.getElementById('input');const t=i.value.trim();if(!t)return;addMsg('user',t);i.value='';document.getElementById('think').classList.add('show');document.getElementById('sendBtn').disabled=true;try{const r=await fetch('http://localhost:8080/completion',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:'<|im_start|>system\n'+MODES[currentMode].sys+'<|im_end|>\n<|im_start|>user\n'+t+'<|im_end|>\n<|im_start|>assistant\n',n_predict:256,temperature:currentMode==='teacher'?0.5:currentMode==='translator'?0.3:0.7,stop:['<|im_end|>']})});const d=await r.json();addMsg('assistant',d.content||'[sin respuesta]')}catch(e){addMsg('assistant','⚠️ Error: '+e.message+'. ¿Está corriendo llama-server?')}document.getElementById('think').classList.remove('show');document.getElementById('sendBtn').disabled=false}
+</script>
+</body>
+</html>
