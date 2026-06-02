@@ -1,0 +1,32 @@
+# Model files (too large for git)
+*.gguf
+*.bin
+*.safetensors
+
+# llama.cpp binaries (too large, installed separately)
+llama.cpp/
+
+# Downloads
+llama-models/
+*.zip
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.env
+
+# Temp
+/tmp/
+*.tmp
+*.log

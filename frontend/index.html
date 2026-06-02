@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Alex Voice — Asistente Local</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --surface2: #1a1a28;
+    --border: #2a2a3e;
+    --text: #e8e8f0;
+    --textDim: #8888a0;
+    --teacher: #6c5ce7;
+    --teacherGlow: rgba(108,92,231,.25);
+    --conversation: #00b894;
+    --conversationGlow: rgba(0,184,148,.25);
+    --translator: #fdcb6e;
+    --translatorGlow: rgba(253,203,110,.2);
+  }
+  * { margin:0; padding:0; box-sizing:border-box }
+  body {
+    font-family:'Plus Jakarta Sans',system-ui,sans-serif;
+    background:var(--bg); color:var(--text);
+    height:100vh; display:flex; overflow:hidden;
+    background-image:radial-gradient(ellipse 80% 50% at 50% -20%, rgba(108,92,231,.08), transparent);
+  }
+  ::-webkit-scrollbar { width:4px }
+  ::-webkit-scrollbar-track { background:transparent }
+  ::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px }
+
+  /* Sidebar */
+  .sidebar {
+    width:280px; background:var(--surface);
+    border-right:1px solid var(--border);
+    padding:24px 16px; display:flex;
+    flex-direction:column; flex-shrink:0;
+  }
+  .logo {
+    font-family:'Instrument Serif',serif;
+    font-size:24px; font-style:italic;
+    margin-bottom:32px; letter-spacing:-.5px;
+  }
+  .logo span { color:var(--teacher); font-style:normal; font-weight:700 }
+
+  .mode-group { display:flex; flex-direction:column; gap:8px; flex:1 }
+  .mode-label {
+    font-size:11px; text-transform:uppercase;
+    letter-spacing:1.5px; color:var(--textDim); margin-bottom:8px
+  }
+  .mode-btn {
+    display:flex; align-items:center; gap:12px;
+    padding:12px 16px; border-radius:12px;
+    border:1px solid transparent; cursor:pointer;
+    background:transparent; color:var(--textDim);
+    font-family:inherit; font-size:14px; font-weight:500;
+    transition:all .3s cubic-bezier(.4,0,.2,1); text-align:left;
+    position:relative; overflow:hidden;
+  }
+  .mode-btn::before {
+    content:''; position:absolute; inset:0; border-radius:12px;
+    opacity:0; transition:opacity .3s;
+  }
+  .mode-btn .icon { font-size:18px; width:32px; text-align:center }
+  .mode-btn:hover { color:var(--text); background:var(--surface2) }
+  .mode-btn.active {
+    color:var(--text); border-color:var(--border);
+    background:var(--surface2);
+  }
+  .mode-btn.active[data-mode="teacher"] {
+    border-color:var(--teacher);
+    box-shadow:0 0 20px var(--teacherGlow);
+  }
+  .mode-btn.active[data-mode="conversation"] {
+    border-color:var(--conversation);
+    box-shadow:0 0 20px var(--conversationGlow);
+  }
+  .mode-btn.active[data-mode="translator"] {
+    border-color:var(--translator);
+    box-shadow:0 0 20px var(--translatorGlow);
+  }
+  .mode-desc { font-size:11px; color:var(--textDim); margin-top:2px; opacity:.7 }
+
+  .status {
+    padding:12px 16px; border-radius:10px;
+    background:var(--surface2); border:1px solid var(--border);
+    font-size:12px; color:var(--textDim);
+    display:flex; align-items:center; gap:8px;
+  }
+  .status-dot {
+    width:8px; height:8px; border-radius:50%;
+    background:var(--conversation); flex-shrink:0;
+    animation:pulse 2s infinite;
+  }
+  .status-dot.offline { background:#e17055; animation:none }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  /* Main */
+  .main {
+    flex:1; display:flex; flex-direction:column;
+    position:relative;
+  }
+  .chat-header {
+    padding:20px 32px; border-bottom:1px solid var(--border);
+    display:flex; align-items:center; justify-content:space-between;
+    background:var(--surface);
+  }
+  .chat-header h2 {
+    font-family:'Instrument Serif',serif;
+    font-size:18px; font-weight:400;
+  }
+  .chat-header .mode-badge {
+    padding:4px 12px; border-radius:20px;
+    font-size:12px; font-weight:600; text-transform:uppercase;
+    letter-spacing:.5px; background:var(--surface2);
+  }
+
+  .messages {
+    flex:1; overflow-y:auto; padding:24px 32px;
+    display:flex; flex-direction:column; gap:16px;
+  }
+  .msg {
+    max-width:72%; padding:14px 18px; border-radius:16px;
+    font-size:14px; line-height:1.6;
+    animation:fadeIn .3s ease;
+  }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+  .msg.user {
+    align-self:flex-end;
+    background:linear-gradient(135deg, var(--teacher), #8b7cf7);
+    color:#fff; border-bottom-right-radius:4px;
+  }
+  .msg.assistant {
+    align-self:flex-start;
+    background:var(--surface2); border:1px solid var(--border);
+    border-bottom-left-radius:4px;
+  }
+  .msg.assistant .thinking {
+    font-size:12px; color:var(--textDim); font-style:italic;
+    margin-bottom:8px; padding:8px 12px;
+    background:rgba(255,255,255,.03); border-radius:8px;
+    display:none;
+  }
+  .msg.assistant .thinking.show { display:block }
+  .msg .timestamp {
+    font-size:10px; color:var(--textDim); margin-top:6px;
+    opacity:.5;
+  }
+
+  .thinking-indicator {
+    align-self:flex-start; display:flex;
+    gap:4px; padding:14px 18px;
+    background:var(--surface2); border:1px solid var(--border);
+    border-radius:16px; border-bottom-left-radius:4px;
+    display:none;
+  }
+  .thinking-indicator.show { display:flex }
+  .thinking-indicator span {
+    width:6px; height:6px; border-radius:50%;
+    background:var(--textDim); animation:bounce 1.4s infinite;
+  }
+  .thinking-indicator span:nth-child(2) { animation-delay:.2s }
+  .thinking-indicator span:nth-child(3) { animation-delay:.4s }
+  @keyframes bounce { 0%,80%,100%{transform:translateY(0)} 40%{transform:translateY(-6px)} }
+
+  /* Input */
+  .input-area {
+    padding:20px 32px; border-top:1px solid var(--border);
+    background:var(--surface);
+  }
+  .input-row {
+    display:flex; gap:12px; align-items:flex-end;
+  }
+  .input-wrapper {
+    flex:1; position:relative;
+  }
+  .input-wrapper textarea {
+    width:100%; padding:14px 18px;
+    border:1px solid var(--border); border-radius:14px;
+    background:var(--surface2); color:var(--text);
+    font-family:inherit; font-size:14px; line-height:1.5;
+    resize:none; outline:none; min-height:52px; max-height:150px;
+    transition:border-color .3s;
+  }
+  .input-wrapper textarea:focus {
+    border-color:var(--teacher);
+    box-shadow:0 0 0 3px var(--teacherGlow);
+  }
+  .input-wrapper textarea::placeholder { color:var(--textDim) }
+
+  .send-btn {
+    width:52px; height:52px; border-radius:14px;
+    border:none; cursor:pointer;
+    background:linear-gradient(135deg, var(--teacher), #8b7cf7);
+    color:#fff; font-size:20px;
+    display:flex; align-items:center; justify-content:center;
+    transition:all .3s; flex-shrink:0;
+  }
+  .send-btn:hover { transform:scale(1.05); box-shadow:0 0 30px var(--teacherGlow) }
+  .send-btn:active { transform:scale(.95) }
+  .send-btn:disabled { opacity:.3; cursor:not-allowed; transform:none }
+
+  /* System prompt display */
+  .sys-prompt-bar {
+    margin-top:12px; padding:8px 14px;
+    background:rgba(255,255,255,.03); border-radius:10px;
+    font-size:11px; color:var(--textDim);
+    display:flex; align-items:center; gap:8px;
+    border:1px solid rgba(255,255,255,.05);
+  }
+  .sys-prompt-bar code {
+    font-size:11px; color:var(--text);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+
+  /* Connection settings */
+  .settings {
+    margin-top:16px; padding-top:16px;
+    border-top:1px solid var(--border);
+  }
+  .settings summary {
+    cursor:pointer; font-size:11px; color:var(--textDim);
+    text-transform:uppercase; letter-spacing:1px;
+  }
+  .settings-content { margin-top:8px; display:flex; flex-direction:column; gap:8px }
+  .settings-content label {
+    font-size:11px; color:var(--textDim); display:flex;
+    align-items:center; gap:8px;
+  }
+  .settings-content input {
+    flex:1; padding:6px 10px; border-radius:6px;
+    border:1px solid var(--border); background:var(--surface2);
+    color:var(--text); font-family:inherit; font-size:12px;
+  }
+
+  .clear-btn {
+    padding:6px 12px; border-radius:6px; border:1px solid var(--border);
+    background:transparent; color:var(--textDim);
+    font-family:inherit; font-size:11px; cursor:pointer;
+    transition:all .2s;
+  }
+  .clear-btn:hover { background:var(--surface2); color:#e17055 }
+
+  @media(max-width:768px) {
+    .sidebar { width:100%; position:fixed; bottom:0; z-index:10; flex-direction:row; padding:12px; height:auto; border-right:none; border-top:1px solid var(--border) }
+    .sidebar .logo, .sidebar .mode-label, .sidebar .mode-desc { display:none }
+    .mode-group { flex-direction:row; gap:4px }
+    .mode-btn { padding:8px 12px; font-size:12px }
+    .mode-btn .icon { font-size:14px; width:auto }
+    .main { padding-bottom:70px }
+    .messages { padding:16px }
+    .msg { max-width:85% }
+  }
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+  <div class="logo">Alex<span>Voice</span></div>
+
+  <div class="mode-group">
+    <div class="mode-label">Modo</div>
+
+    <button class="mode-btn active" data-mode="teacher" onclick="setMode('teacher')">
+      <span class="icon">🎓</span>
+      <div>
+        <div>Teacher</div>
+        <div class="mode-desc">Explicaciones y enseñanza</div>
+      </div>
+    </button>
+
+    <button class="mode-btn" data-mode="conversation" onclick="setMode('conversation')">
+      <span class="icon">💬</span>
+      <div>
+        <div>Conversación</div>
+        <div class="mode-desc">Charla natural y fluida</div>
+      </div>
+    </button>
+
+    <button class="mode-btn" data-mode="translator" onclick="setMode('translator')">
+      <span class="icon">🌍</span>
+      <div>
+        <div>Traductor</div>
+        <div class="mode-desc">ES / EN / JA</div>
+      </div>
+    </button>
+  </div>
+
+  <div class="status">
+    <div class="status-dot offline" id="statusDot"></div>
+    <span id="statusText">Desconectado</span>
+  </div>
+</div>
+
+<div class="main">
+  <div class="chat-header">
+    <h2 id="modeTitle">🎓 Modo Teacher</h2>
+    <span class="mode-badge" id="modeBadge">Teacher Mode</span>
+  </div>
+
+  <div class="messages" id="messages">
+    <div class="msg assistant">
+      ¡Bienvenido a Alex Voice! Soy tu asistente local con IA.
+      Selecciona un modo en la barra lateral y empieza a escribir.
+      <div class="timestamp">Alex Voice · v1.0</div>
+    </div>
+  </div>
+
+  <div class="thinking-indicator" id="thinking">
+    <span></span><span></span><span></span>
+  </div>
+
+  <div class="input-area">
+    <div class="input-row">
+      <div class="input-wrapper">
+        <textarea id="userInput" placeholder="Escribe tu mensaje..." rows="1"
+          onkeydown="if(event.key==='enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
+      </div>
+      <button class="send-btn" id="sendBtn" onclick="send()">➤</button>
+    </div>
+    <div class="sys-prompt-bar">
+      📋 <span id="sysPromptPreview">System prompt activo</span>
+      <button class="clear-btn" onclick="clearChat()" style="margin-left:auto">Limpiar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const MODES = {
+  teacher: {
+    name: '🎓 Modo Teacher',
+    badge: 'Teacher Mode',
+    sysPrompt: 'Eres un tutor paciente y experto en multiples materias. Explica conceptos de forma clara, con ejemplos y metaforas. Respondes en el idioma del usuario. Si preguntan en espanol, respondes en espanol. Adaptas tu explicacion al nivel del estudiante. Usa romanizacion (romaji) para palabras japonesas cuando sea relevante.',
+    color: '#6c5ce7'
+  },
+  conversation: {
+    name: '💬 Modo Conversación',
+    badge: 'Conversation Mode',
+    sysPrompt: 'Eres un asistente conversacional amigable y natural. Respondes en el mismo idioma en que te hablan. Eres util, simpatico y directo. No eres un tutor ni un traductor, solo un companero de charla con conocimiento general. Mantienes respuestas concisas pero completas.',
+    color: '#00b894'
+  },
+  translator: {
+    name: '🌍 Modo Traductor',
+    badge: 'Translator Mode',
+    sysPrompt: 'Eres un traductor profesional de espanol, ingles y japones. Cuando recibas un texto, identifica el idioma de origen y traducelo al idioma solicitado. Si no se especifica idioma destino, traduce al espanol. Proporciona:
+    1) La traduccion directa
+    2) Notas culturales si es relevante
+    3) Para japones: incluye romaji y explicacion de kanji cuando sea util
+    Responde en el idioma que usaron para dirigirse a ti.',
+    color: '#fdcb6e'
+  }
+};
+
+let currentMode = 'teacher';
+let isProcessing = false;
+
+function setMode(mode) {
+  currentMode = mode;
+  const config = MODES[mode];
+
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector(`.mode-btn[data-mode="${mode}"]`).classList.add('active');
+
+  document.getElementById('modeTitle').textContent = config.name;
+  document.getElementById('modeBadge').textContent = config.badge;
+  document.getElementById('sysPromptPreview').textContent =
+    config.sysPrompt.substring(0, 70) + '...';
+
+  // Update accent color on textarea focus and button
+  const textarea = document.querySelector('.input-wrapper textarea');
+  const sendBtn = document.querySelector('.send-btn');
+  textarea.style.setProperty('--focus-color', config.color);
+  sendBtn.style.background = `linear-gradient(135deg, ${config.color}, ${config.color}dd)`;
+
+  addSystemMessage(`✅ Cambiado a **${config.badge}**. ${config.sysPrompt.substring(0, 60)}...`);
+}
+
+function addSystemMessage(text) {
+  const div = document.createElement('div');
+  div.className = 'msg assistant';
+  div.innerHTML = text;
+  div.querySelector('.timestamp') || div.insertAdjacentHTML('beforeend', '<div class="timestamp">Sistema</div>');
+  document.getElementById('messages').appendChild(div);
+  scrollToBottom();
+}
+
+function addMessage(role, text, thinking) {
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+
+  if (thinking) {
+    div.innerHTML = `<div class="thinking show">🤔 ${thinking}</div>${text}`;
+  } else {
+    div.textContent = text;
+  }
+
+  const ts = document.createElement('div');
+  ts.className = 'timestamp';
+  ts.textContent = new Date().toLocaleTimeString();
+  div.appendChild(ts);
+
+  document.getElementById('messages').appendChild(div);
+  scrollToBottom();
+}
+
+function scrollToBottom() {
+  const msgs = document.getElementById('messages');
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function clearChat() {
+  document.getElementById('messages').innerHTML = `
+    <div class="msg assistant">
+      Chat limpiado. Selecciona un modo para empezar de nuevo.
+      <div class="timestamp">Alex Voice · v1.0</div>
+    </div>
+  `;
+}
+
+async function send() {
+  if (isProcessing) return;
+  const input = document.getElementById('userInput');
+  const text = input.value.trim();
+  if (!text) return;
+
+  input.value = '';
+  input.style.height = 'auto';
+  addMessage('user', text);
+
+  isProcessing = true;
+  document.getElementById('thinking').classList.add('show');
+  document.getElementById('sendBtn').disabled = true;
+
+  try {
+    const serverUrl = document.getElementById('serverUrl')?.value || 'http://localhost:8080';
+    const config = MODES[currentMode];
+
+    const response = await fetch(`${serverUrl}/completion`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: `${config.sysPrompt}\n\nUsuario: ${text}\nAsistente:`,
+        n_predict: 256,
+        temperature: currentMode === 'teacher' ? 0.5 : currentMode === 'translator' ? 0.3 : 0.7,
+        top_k: 40,
+        top_p: 0.9,
+        repeat_penalty: 1.1,
+        stop: ['\nUsuario:', '\nUsario:', '<|im_end|>'],
+        stream: false
+      })
+    });
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const data = await response.json();
+    let reply = data.content || data.text || '';
+
+    // Extract thinking if present
+    let thinking = '';
+    const thinkMatch = reply.match(/<think>(.*?)<\/think>/s) || reply.match(/\[Start thinking\](.*?)(?:\[End thinking\]|$)/s);
+    if (thinkMatch) {
+      thinking = thinkMatch[1].trim();
+      reply = reply.replace(thinkMatch[0], '').trim();
+    }
+
+    addMessage('assistant', reply, thinking || null);
+
+    // Update status
+    document.getElementById('statusDot').classList.remove('offline');
+    document.getElementById('statusText').textContent = 'Conectado';
+
+  } catch (err) {
+    addMessage('assistant', `⚠️ Error de conexión: ${err.message}\n\nAsegúrate de que llama-server esté corriendo en el puerto correcto.`);
+    document.getElementById('statusDot').classList.add('offline');
+    document.getElementById('statusText').textContent = 'Error de conexión';
+  } finally {
+    isProcessing = false;
+    document.getElementById('thinking').classList.remove('show');
+    document.getElementById('sendBtn').disabled = false;
+    input.focus();
+  }
+}
+
+// Auto-resize textarea
+document.getElementById('userInput').addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 150) + 'px';
+});
+
+// Ini
+setMode('teacher');
+</script>
+</body>
+</html>
