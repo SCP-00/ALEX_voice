@@ -6,6 +6,13 @@
 # llama.cpp binaries (too large, installed separately)
 llama.cpp/
 
+# Piper large binaries
+bin/piper/onnxruntime.dll
+bin/piper/onnxruntime_providers_shared.dll
+bin/piper/espeak-ng.dll
+bin/piper/espeak-ng-data/
+bin/piper/piper_phonemize.dll
+
 # Downloads
 llama-models/
 *.zip
