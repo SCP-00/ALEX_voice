@@ -23,6 +23,77 @@ from urllib.parse import urlparse
 # ── Módulos propios ────────────────────────────────────────────
 from logger import add_log, get_logs, get_log_stats, clear_logs
 
+# ── LRU Cache para respuestas LLM ──────────────────────────────
+# Cachea respuestas frecuentes para reducir latencia en preguntas comunes.
+# Clave: hash del (system_prompt + history). Valor: texto de respuesta.
+from collections import OrderedDict
+
+class ResponseCache:
+    """LRU cache thread-safe para respuestas del LLM.
+    
+    Almacena hasta maxsize respuestas. Cuando se alcanza el límite,
+    elimina la entrada menos recientemente usada.
+    Útil para preguntas frecuentes como saludos, presentaciones, etc.
+    """
+    def __init__(self, maxsize=50):
+        self._cache = OrderedDict()
+        self._maxsize = maxsize
+        self._lock = threading.Lock()
+        self._hits = 0
+        self._misses = 0
+    
+    def _make_key(self, messages):
+        """Genera clave hash a partir de los mensajes.
+        Usa solo los últimos 2 mensajes (último user + último assistant)
+        para permitir caché incluso con historial cambiante."""
+        # Normalizar: solo contar user messages relevantes
+        key_parts = []
+        for msg in messages[-4:]:  # últimos 4 mensajes
+            role = msg.get('role', '')
+            content = msg.get('content', '')[:200]  # truncar a 200 chars
+            key_parts.append(f"{role}:{content}")
+        return hash('|'.join(key_parts))
+    
+    def get(self, messages):
+        """Retorna respuesta cacheada o None."""
+        key = self._make_key(messages)
+        with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)  # LRU: mover al final
+                self._hits += 1
+                return self._cache[key]
+            self._misses += 1
+            return None
+    
+    def put(self, messages, response):
+        """Almacena respuesta en caché."""
+        if not response or len(response) < 20:
+            return  # no cachear respuestas vacías o muy cortas
+        key = self._make_key(messages)
+        with self._lock:
+            self._cache[key] = response
+            self._cache.move_to_end(key)
+            if len(self._cache) > self._maxsize:
+                self._cache.popitem(last=False)  # eliminar LRU
+    
+    def invalidate(self):
+        """Invalida toda la caché (ej: cambio de modo/tema)."""
+        with self._lock:
+            self._cache.clear()
+    
+    def stats(self):
+        """Estadísticas de la caché."""
+        with self._lock:
+            total = self._hits + self._misses
+            hit_rate = (self._hits / total * 100) if total > 0 else 0
+            return {
+                "size": len(self._cache),
+                "maxsize": self._maxsize,
+                "hits": self._hits,
+                "misses": self._misses,
+                "hit_rate": round(hit_rate, 1),
+            }
+
 # ── Configuración ──────────────────────────────────────────────
 LLAMA_HOST = os.environ.get("LLAMA_HOST", "http://localhost:8081")
 PORT = int(os.environ.get("MONITOR_PORT", "3000"))
@@ -1031,6 +1102,7 @@ def _run_piper_file(text, model_path, piper_exe):
 
 # ── Servidor HTTP ──────────────────────────────────────────────
 _stats_collector = None
+_response_cache = ResponseCache(maxsize=50)  # LRU cache para LLM
 _piper_tts = None  # PiperTTS con modelos precargados en memoria
 _piper_es = None   # Fallback: proceso persistente ES
 _piper_en = None   # Fallback: proceso persistente EN
@@ -1059,6 +1131,11 @@ class Handler(SimpleHTTPRequestHandler):
             self._handle_log_export()
         elif self.path == "/api/hardware":
             self._json_response(_stats_collector.get_hardware_detail())
+        elif self.path == "/api/cache/stats":
+            self._json_response(_response_cache.stats())
+        elif self.path == "/api/cache/clear":
+            _response_cache.invalidate()
+            self._json_response({"ok": True})
         elif self.path in ("/", "/index.html"):
             self._serve_file("plan-a/index.html")
         elif self.path in ("/debug", "/debug.html"):
@@ -1136,6 +1213,27 @@ class Handler(SimpleHTTPRequestHandler):
                 headers={"Content-Type": "application/json"},
             )
             
+            # Verificar caché para requests no-streaming
+            if not chat_data.get("stream"):
+                cached = _response_cache.get(chat_data.get("messages", []))
+                if cached:
+                    _safe_print(f"[proxy] Cache HIT! {len(cached)} chars")
+                    # Devolver respuesta cacheada con formato OpenAI-compatible
+                    result = {
+                        "choices": [{"message": {"content": cached}}],
+                        "usage": {"completion_tokens": 0, "prompt_tokens": 0},
+                        "cached": True
+                    }
+                    content = cached
+                    token_count = 0
+                    prompt_tokens = 0
+                    lang_detected = detect_language(content) if content else ""
+                    add_log("output", content[:500], mode="plan-a", language=lang_detected,
+                            token_count=token_count, char_count=len(content),
+                            extra={"prompt_tokens": prompt_tokens, "cached": True})
+                    self._json_response(result)
+                    return
+            
             if chat_data.get("stream"):
                 # Streaming: relay SSE response
                 with urllib.request.urlopen(req, timeout=120) as resp:
@@ -1173,6 +1271,9 @@ class Handler(SimpleHTTPRequestHandler):
                 add_log("output", content[:500], mode="plan-a", language=lang_detected,
                         token_count=token_count, char_count=len(content),
                         extra={"prompt_tokens": prompt_tokens})
+                # Cachear respuesta no-streaming para futuros hits
+                if content and len(content) > 20:
+                    _response_cache.put(chat_data.get("messages", []), content)
                 self._json_response(result)
 
         except urllib.error.HTTPError as e:
