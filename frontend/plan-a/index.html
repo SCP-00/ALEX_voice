@@ -1458,9 +1458,6 @@ async function sendText(text, fromMic) {
               document.getElementById('think').classList.remove('show');
               document.getElementById('sendBtn').disabled = false;
               return; // exit early on stream complete
-            }
-          } catch (e) {
-            // JSON parse error on partial line, skip
           }
         }
       }
