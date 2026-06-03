@@ -7,9 +7,9 @@ set PYTHON=C:\Users\andyh\AppData\Local\Programs\Python\Python310\python.exe
 set LLAMA_DIR=C:\Users\andyh\Documents\llama-b9479-bin-win-cuda-13.3-x64
 set MODEL_DIR=C:\Users\andyh\.lmstudio\models\khazarai\Qwen3.5-2B-Qwen3.6-plus-Distilled-GGUF
 set MODEL=%MODEL_DIR%\Qwen3.5-2B-Qwen3.6-plus-Distilled-q8_0.gguf
-set PLAN_PORT=3000
+set PLAN_PORT=3002
 set PLAN_NAME=Plan C
-set SERVER_SCRIPT=%~dp0..\server.py
+set SERVER_SCRIPT=%~dp0server.py
 
 cd /d "%~dp0"
 
