@@ -1,22 +1,28 @@
 # AGENT — Folder D (Recomendación Final)
 
 ## Decisión Final
-**Plan A: LLM + TTS combinados en GPU.** Qwen3.5-2B-Q8 + OuteTTS-500M caben en 5.28 GB VRAM.
+**Plan A: LLM (GPU) + Piper TTS (CPU Python API ~45ms).**
+Qwen3.5-2B-Q8 + Piper = mejor latencia TTS + VRAM para LLM.
 
 ## Stack Final
-- **LLM:** Qwen3.5-2B-Q8 (21-22 tok/s, ~3.0 GB)
-- **TTS:** OuteTTS-500M (~0.5 GB) o Piper TTS CPU
-- **API:** llama-server.exe
-- **Frontend:** HTML+JS vanilla
-- **ASR:** whisper.cpp (futuro)
+- **LLM:** Qwen3.5-2B-Q8 (21-22 tok/s, ~3.0 GB VRAM)
+- **TTS:** Piper Python API (~45ms, CPU, ES/EN en memoria)
+- **Monitor:** python server.py (stats, logs, debug, proxy)
+- **Frontend:** HTML+JS vanilla (Plan A, 3 modos)
+- **ASR:** whisper.cpp (pendiente, endpoint listo)
+- **Startup:** start_server.bat (un clic)
 
 ## Argumentos
-1. VRAM suficiente para ambos modelos cargados
-2. Sin overhead de swapping
-3. Qwen3.5-2B rápido y multilingüe
-4. OuteTTS ligero y multilingüe
+1. Piper Python API **40-50x más rápido** que subprocess Piper
+2. Piper en CPU deja toda la VRAM para el LLM
+3. OuteTTS (~13s) no es viable para uso interactivo
+4. Monitor server unifica proxy, stats, logs, debug en un proceso
+5. logger.py modulariza sin afectar latencia
 
-## Limitaciones
-- OuteTTS necesita debug de parámetros
-- Sin ASR todavía
-- Modo traductor no probado con japonés
+## Siguiente Paso
+**Optimizar ASR:** Probar modelo small/medium para mejor precisión, o integrar VAD más preciso para reducir falsos positivos.
+
+## Limitaciones Actuales
+- Sin streaming de audio TTS (carga completa del WAV)
+- Modo Traductor puede mejorar con ejemplos específicos
+- Sin VAD (Voice Activity Detection) avanzado

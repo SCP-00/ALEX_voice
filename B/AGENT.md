@@ -1,26 +1,22 @@
 # AGENT — Folder B (Actualizado)
 
 ## Role
-Operar el asistente local con LLM en GPU y TTS en CPU.
+Fallback de Plan A: LLM en GPU, TTS en CPU.
 
 ## Hallazgos Reales
 - **Qwen3.5-2B-Q8:** 21-22 tok/s, ~3.0 GB VRAM ✅
-- **Gemma-4-E2B-Q4:** 24.3 tok/s, ~3.5 GB VRAM ✅
-- **VRAM Real:** 5.28 GB usable (margen de 2.3 GB con Qwen)
-- **OuteTTS-500M:** Descargado, pendiente de debug
+- **Piper Python API:** ~45ms latencia, modelos en memoria ✅
+- **Piper subprocess:** ~2400ms — evitar, usar Python API
+- **OuteTTS GPU:** ~13000ms — demasiado lento
+- **Monitor Server:** python server.py con debug UI, stats, logs ✅
 
-## Loading Policy (Actualizada)
+## Loading Policy
 - LLM cargado una vez, siempre residente en GPU
-- TTS en CPU, cargado bajo demanda
-- ASR solo cuando hay entrada de voz activa
+- Modelos Piper cargados al iniciar server.py
+- Fallback a pipe/subprocess si Python API no instalada
 
-## Fallback Logic
-- Si TTS lento: solo texto
-- Si VRAM sube: reducir contexto con --fit
-- Si ASR falla: permitir entrada escrita
-
-## Test Order
+## Test Order (Actualizado)
 1. ✅ LLM baseline (COMPLETADO)
-2. ⏳ CPU TTS baseline
-3. ⏳ ASR baseline
-4. ⏳ Full voice pipeline
+2. ✅ CPU TTS baseline (COMPLETADO — Piper Python API 45ms)
+3. ✅ ASR baseline (faster-whisper tiny, CPU ~300ms)
+4. ✅ Full voice pipeline (Audio → ASR → LLM → TTS)

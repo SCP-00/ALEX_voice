@@ -1,53 +1,77 @@
 # Plan A — Combined LLM + TTS ✅ VIABLE
 
 ## Objective
-Validate whether a combined LLM + TTS architecture can operate safely under a 5.28 GB VRAM ceiling.
+Ejecutar LLM + TTS compartiendo GPU sin swapping. Plan activo y en producción.
 
-## Research Results (Verificado en hardware real)
+## Sistema Actual (Funcionando)
 
-### LLM Candidates — Probados con inferencia real
-| Modelo | Tok/s | VRAM | ¿Recomendado? |
-|--------|-------|------|:------------:|
-| Qwen3.5-2B-Q8 | 21-22 | ~2.5-3.0 GB | ✅ Primera opción |
-| Gemma-4-E2B-Q4 | 24.3 | ~3.5-4.0 GB | ✅ Alternativa |
-| DeepSeek-R1-8B-Q4 | 8.9 | ~5.0 GB | ❌ Muy lento |
-| Gemma-4-E4B-Q4 | — | ~5.5 GB | ❌ No cabe |
+### Componentes
 
-### TTS Candidate
-| Modelo | Tamaño | Estado |
-|--------|--------|--------|
-| OuteTTS-0.2-500M-Q4_K_M | 385 MB | ✅ Descargado |
-| Piper TTS (CPU) | ~200 MB | Pendiente |
-| MeloTTS (CPU) | ~1 GB | Pendiente |
+| Componente | Estatus | Detalle |
+|:-----------|:-------:|:--------|
+| **LLM** | ✅ | Qwen3.5-2B-Q8, 21-22 tok/s, llama-server puerto 8081 |
+| **Monitor** | ✅ | python server.py puerto 3000 con stats GPU/CPU/RAM en vivo |
+| **Chat Proxy** | ✅ | /api/chat → llama-server /chat/completions |
+| **TTS Piper** | ✅ | Python API (~45ms), modelos ES/EN en memoria |
+| **TTS GPU** | ⚠️ | OuteTTS vía llama-tts.exe (~13s, experimental) |
+| **ASR** | ✅ | faster-whisper tiny, CPU, ~200-500ms |
+| **Debug UI** | ✅ | /debug con 4 tabs (Timeline/Analytics/Hardware/TTS) |
+| **Logging** | ✅ | logger.py con stats y export JSON |
+| **Idiomas** | ✅ | ES/EN detectados, JA por caracteres Unicode |
 
-### Combinación Ganadora
-**Qwen3.5-2B-Q8 + OuteTTS-500M** = ~3.5 GB VRAM total
-Margen: ~1.8 GB para KV cache y buffers
+### Benchmark TTS (Verificado en hardware real)
+| Método | Latencia | Notas |
+|:-------|:--------:|:------|
+| Piper Python API | **~45-65ms** | 🥇 Modelos en memoria vía piper-tts |
+| Piper pipe persistente | ~2100ms | Fallback si no hay piper-tts |
+| Piper subprocess | ~2400ms | Último fallback |
+| OuteTTS GPU | ~13000ms | Experimental, muy lento |
+
+### Rendimiento LLM
+| Modelo | Tok/s | VRAM | Prompt | 
+|--------|:-----:|:----:|:------:|
+| Qwen3.5-2B-Q8 | 21-22 | ~3.0 GB | 68 tok/s |
+| Gemma-4-E2B-Q4 | 24.3 | ~3.5 GB | 109 tok/s |
 
 ## Implementation Phases (Actualizado)
-### Phase 1 ✅ — Baseline (COMPLETADO)
-- ✅ llama.cpp v9479 instalado con CUDA 13.3
-- ✅ Qwen3.5-2B-Q8 probado: 21-22 tok/s en GPU
-- ✅ Gemma-4-E2B-Q4 probado: 24.3 tok/s
-- ✅ DeepSeek-R1-8B probado: 8.9 tok/s
-- ✅ VRAM validada: 5.28 GB usable
 
-### Phase 2 — Speech Output
-- [ ] Debuggear OuteTTS (parámetro -m no funciona)
-- [ ] Alternativa: Piper TTS en CPU
-- [ ] Medir latencia de síntesis
+### Phase 1 ✅ — LLM + Monitor (COMPLETADO)
+- ✅ llama-server con Qwen3.5-2B-Q8
+- ✅ Monitor server con stats en tiempo real
+- ✅ Frontend HTML+JS funcional
+- ✅ Debug UI (/debug)
 
-### Phase 3 — Switching (No necesario - ambos caben)
-- ❌ No requiere swapping — LLM + TTS residentes juntos
+### Phase 2 ✅ — TTS (COMPLETADO)
+- ✅ Piper Python API con modelos en memoria (45ms)
+- ✅ Detección de idioma y split multilingüe
+- ✅ Fallback progresivo (API → pipe → subprocess)
+- ✅ Endpoint /api/tts-piper
 
-### Phase 4 — Stress Testing
-- [ ] Prueba de contexto largo (>2048 tokens)
-- [ ] Cambio de modos (teacher/conversation/translator)
-- [ ] Sesiones prolongadas (>30 min)
+### Phase 3 ✅ — Voice Input Pipeline (COMPLETADO)
+- [x] faster-whisper instalado y cargado al iniciar server.py
+- [x] ASR endpoint /api/asr con faster-whisper como primario
+- [x] Micrófono integrado en frontend (Chrome ASR + Whisper ASR)
+- [x] Pipeline completo: Audio → ASR → LLM → TTS
 
-## Benchmark Checklist (Actualizado)
-- ✅ time to first token: ~3-5s (Qwen)
-- ✅ tokens/second: 21-24 tok/s
-- ⌛ peak VRAM: ~3.0-3.5 GB (estimado)
-- ⌛ model load time: ~5-10s
-- ⌛ response latency: ~3-8s end-to-end
+### Phase 4 📋 — Mejoras Futuras
+- [ ] Caché de respuestas
+- [ ] Streaming TTS
+- [ ] Voice cloning (OuteTTS speaker file)
+- [ ] VAD (Voice Activity Detection) avanzado
+
+## Stack Tecnológico Final
+- **LLM:** Qwen3.5-2B-Q8 (GPU, llama-server)
+- **TTS:** Piper Python API (CPU, ~45ms)
+- **Monitor:** python server.py (CPU)
+- **Frontend:** HTML+JS vanilla
+- **ASR:** faster-whisper (CPU, ~300ms)
+- **OS:** Windows 11
+
+## Criterios de Aceptación (100%)
+- ✅ Sin OOM events
+- ✅ Conversación natural en español/inglés/japonés
+- ✅ TTS < 100ms de latencia
+- ✅ Pipeline de voz completo: Audio → ASR → LLM → TTS
+- ✅ Debug UI con monitoreo en vivo
+- ✅ Logging de todas las operaciones
+- ✅ Modo Traductor con system prompt refinado

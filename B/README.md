@@ -1,37 +1,57 @@
 # Folder B — LLM on GPU, TTS on CPU ✅ RECOMENDADO COMO FALLBACK
 
 ## Purpose
-Arquitectura de menor riesgo: LLM en GPU, TTS en CPU.
+Arquitectura de menor riesgo: LLM en GPU, TTS en CPU. **Fallback de Plan A.**
 
-## Benchmarks Reales
+## 🚀 Estado Actual
 
-### LLM en GPU — Probados
+### ✅ LLM en GPU (Probado)
 | Modelo | VRAM | Tok/s | Español |
-|--------|------|-------|:-------:|
-| **Qwen3.5-2B-Q8** 🥇 | ~2.5-3.0 GB | **21-22 tok/s** | ✅ Excelente |
-| **Gemma-4-E2B-Q4** 🥈 | ~3.5-4.0 GB | **24.3 tok/s** | ✅ Excelente |
-| **Gemma-E2B-Uncensored-Q8** | ~5.0 GB | ~15 tok/s | ✅ |
-| **DeepSeek-R1-8B-Q4** | ~5.0 GB | **8.9 tok/s** | ✅ |
+|--------|:----:|:-----:|:-------:|
+| **Qwen3.5-2B-Q8** 🥇 | ~3.0 GB | **21-22 tok/s** | ✅ Excelente |
+| **Gemma-4-E2B-Q4** 🥈 | ~3.5 GB | **24.3 tok/s** | ✅ Excelente |
 
-### TTS en CPU — Pendientes de probar
-| Motor | RAM | Latinoamérica | Velocidad |
-|-------|-----|:------------:|:---------:|
-| **OuteTTS-500M** (GPU/CPU) | ~500 MB | ✅ 20+ idiomas | Descargado |
-| **Piper TTS** | ~200 MB | ✅ ES/EN/JA | Muy rápida |
-| **MeloTTS** | ~1 GB | ✅ ES/EN/JA | Rápida |
+### ✅ TTS en CPU — Piper Python API (Activo)
+| Aspecto | Dato |
+|:--------|:------|
+| Motor | `piper-tts` v1.4.2 Python bindings |
+| Latencia | **~45-65ms** por síntesis |
+| Modelo ES | `es_ES-sharvard-medium.onnx` |
+| Modelo EN | `en_US-lessac-medium.onnx` |
+| RAM | ~150 MB |
 
-### Hardware
+### ✅ Monitor Server (python server.py, puerto 3000)
+El monitor server sirve como orquestador central:
+- Proxy de chat a llama-server
+- Endpoint TTS (/api/tts-piper)
+- Endpoint ASR (/api/asr, faster-whisper CPU ~300ms)
+- Debug UI (/debug)
+- Stats en vivo de GPU/CPU/RAM/LLM
+- Logging de eventos
+
+### ✅ ASR (Voice Input) — COMPLETADO
+| Componente | Estado |
+|:-----------|:------:|
+| faster-whisper (modelo tiny, CPU) | ✅ Cargado al iniciar server.py |
+| Transcripción WAV | ✅ ~200-500ms |
+| Micrófono en frontend | ✅ Chrome ASR + Whisper ASR |
+| Pipeline: Audio → ASR → LLM → TTS | ✅ Completo |
+
+## Hardware
 - CPU: i5-13420H (8C/12T)
 - RAM: 16.5 GB (5.7 GB libre)
 - GPU: RTX 3050 6GB (5.28 GB VRAM usable)
 
-### Estrategia
+## Estrategia
 - LLM siempre en GPU (Qwen3.5-2B-Q8 recomendado)
-- TTS en CPU (Piper o MeloTTS)
+- TTS en CPU via Piper Python API (~45ms)
+- ASR en CPU via faster-whisper (~300ms)
+- Piper modelos cargados en memoria al iniciar server.py
 - Sin riesgo de OOM en GPU
-- ~2.8 GB de VRAM libre para contexto
+- ~2.3 GB de VRAM libre para contexto
 
-### Riesgos
-- ⚠️ TTS en CPU añade 1-3s de latencia
-- ⚠️ RAM puede ser cuello de botella si ASR + TTS corren juntos
-- ✅ GPU siempre estable por debajo del límite
+## Riesgos Mitigados
+- ✅ TTS en CPU es muy rápido (~45ms) con Piper Python API
+- ✅ Sin riesgo de OOM en GPU
+- ⚠️ OuteTTS GPU es lento (~13s) — no recomendado
+- ⚠️ Piper.exe nativo (subprocess) es lento (~2400ms) — usar Python API

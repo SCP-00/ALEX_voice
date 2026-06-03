@@ -1,76 +1,90 @@
 # Folder D — Recomendación Final 📊 BASADA EN DATOS REALES
 
-## ⚡ Decisión: Plan A (LLM + TTS en GPU) con Plan B como fallback
+## ⚡ Decisión: Plan A — LLM (GPU) + TTS (CPU Python API ~45ms)
 
-Después de probar todos los modelos en hardware real, la arquitectura ganadora es:
+Después de probar todas las opciones en hardware real, la arquitectura ganadora es:
 
-### 🏆 Arquitectura Recomendada
+### 🏆 Arquitectura en Producción
 
 ```
-Qwen3.5-2B-Q8 (GPU) + OuteTTS-500M (GPU) = ~3.5 GB VRAM TOTAL
+start_server.bat
+├── llama-server (Qwen3.5-2B-Q8, GPU, puerto 8081, 21-22 tok/s)
+└── python server.py (Monitor, CPU, puerto 3000)
+    ├── /api/chat → llama-server
+    ├── /api/tts-piper → Piper Python API (~45ms, CPU)
+    ├── /api/asr → faster-whisper (CPU, ~300ms) ✅
+    ├── /api/stats → GPU/CPU/RAM en vivo
+    ├── /api/logs → Logging enriquecido
+    └── /debug → UI de depuración
 ```
-
-**Razón:** Cabe todo en GPU con 1.8 GB de margen. Sin swapping. Simple.
 
 ### 📊 Evidencia Empírica
 
-| Modelo | VRAM | Tok/s | ¿Cabe? | Veredicto |
-|--------|:----:|:-----:|:------:|:---------:|
-| Qwen3.5-2B-Q8 | ~3.0 GB | **21-22** | ✅ Sí | 🥇 **Elegido** |
-| Gemma-4-E2B-Q4 | ~3.5 GB | **24.3** | ✅ Sí | 🥈 Alternativa |
-| DeepSeek-R1-8B-Q4 | ~5.0 GB | **8.9** | ⚠️ Justo | ❌ Muy lento |
-| Gemma-4-E4B-Q4 | ~5.5 GB | — | ❌ No | ❌ Excede |
-| OuteTTS-500M | ~0.5 GB | — | ✅ Sí | 🥇 TTS elegido |
+| Componente | Opción Elegida | Alternativa | Razón |
+|:-----------|:--------------|:------------|:------|
+| **LLM** | Qwen3.5-2B-Q8 (21 tok/s, ~3 GB) | Gemma-4-E2B-Q4 (24 tok/s, ~3.5 GB) | Qwen consume menos VRAM, dejando margen |
+| **TTS** | **Piper Python API** (~45ms, CPU) 🥇 | OuteTTS GPU (~13s) ❌ | **40-50x más rápido**, mismo modelo de voz |
+| **Monitor** | python server.py | — | Stats, logs, debug en un solo proceso |
+| **ASR** | faster-whisper tiny (CPU ~300ms) | ✅ |
 
 ### 🗺️ Roadmap de Implementación
 
-```
+```text
 Fase 0 ✅ Entorno listo
-  ├── llama.cpp v9479 + CUDA 13.3
-  ├── Qwen3.5-2B-Q8 + Gemma-4-E2B-Q4 + DeepSeek-R1-8B probados
-  └── OuteTTS-500M descargado
+  ├── llama-server + Qwen3.5-2B-Q8 (21 tok/s)
+  ├── Piper Python API (~45ms TTS)
+  ├── server.py (monitor, proxy, stats, logs)
+  ├── start_server.bat (inicio con un clic)
+  └── debug.html (4 tabs de monitoreo)
 
-Fase 1 🚧 Frontend + TTS (AHORA)
-  ├── Interfaz HTML+JS con 3 modos
-  ├── llamar a llama-server.exe via HTTP
-  └── Debuggear OuteTTS o instalar Piper
+Fase 1 ✅ Frontend + TTS (COMPLETADO)
+  ├── Interfaz Plan A (HTML+JS, 3 modos)
+  ├── TTS multilingüe (ES/EN/JA)
+  ├── Split automático por idioma
+  └── Chat streaming
 
-Fase 2 🚧 Modos de interacción
-  ├── Modo Teacher: prompts educativos + TTS lento
-  ├── Modo Conversación: chat libre + TTS rápido
-  └── Modo Traductor: traducción es/en/ja
+Fase 2 ✅ Modos de interacción (COMPLETADO)
+  ├── Modo Teacher: prompts educativos
+  ├── Modo Conversación: chat libre
+  └── 🚧 Modo Traductor: ES/EN/JA
 
-Fase 3 🚧 Voice Input
-  ├── whisper.cpp para ASR
-  └── Pipeline voz completo
+Fase 3 ✅ Voice Input (COMPLETADO)
+  ├── faster-whisper tiny (CPU, ~300ms)
+  ├── Pipeline: Audio → ASR → LLM → TTS
+  └── Micrófono en frontend (Chrome ASR + Whisper ASR)
 
-Fase 4 🚧 Optimización
+Fase 4 📋 Optimización
   ├── Caché de respuestas
-  ├── Voice cloning (OuteTTS speaker file)
-  └── Streaming de audio
+  ├── Streaming de audio TTS
+  └── Voice cloning (OuteTTS speaker file)
 ```
 
-### 💡 Stack Tecnológico Recomendado
+### 💡 Stack Tecnológico Final
 
-| Capa | Tecnología | Razón |
-|:----:|:----------:|:-----:|
-| **Frontend** | HTML + CSS + JS | Vanilla, sin dependencias |
-| **API Server** | `llama-server.exe` | HTTP API nativa, no necesita Python |
-| **LLM** | Qwen3.5-2B-Q8 GGUF | 21 tok/s, multilingüe |
-| **TTS** | OuteTTS-500M o Piper | GPU o CPU según necesidad |
-| **ASR** | whisper.cpp tiny | Ligero, ~500 MB RAM |
-| **Control** | Bash script | Orchestrador simple |
+| Capa | Tecnología | Versión |
+|:----:|:----------:|:--------|
+| **Frontend** | HTML + CSS + JS | Vanilla, 3 modos, debug UI |
+| **LLM Server** | `llama-server.exe` | v9479, CUDA 13.3 |
+| **LLM Model** | Qwen3.5-2B-Q8 GGUF | 2 GB, 21 tok/s |
+| **TTS** | `piper-tts` Python API | v1.4.2, ~45ms |
+| **Monitor** | `python server.py` | puerto 3000 |
+| **ASR** | faster-whisper tiny (CPU ~300ms) | ✅ |
+| **Logging** | `logger.py` | 2000 entradas, stats, export |
+| **Startup** | `start_server.bat` | Un clic, cleanup automático |
 
 ### 📐 Presupuesto de Memoria Final
 
 | Componente | VRAM | RAM |
 |:----------:|:----:|:---:|
-| Qwen3.5-2B-Q8 | 2.5-3.0 GB | — |
-| OuteTTS-500M | 0.5-0.8 GB | — |
+| Qwen3.5-2B-Q8 | ~3.0 GB | — |
 | KV Cache (2K ctx) | ~0.5 GB | — |
-| Audio Buffers | ~0.2 GB | — |
-| **Total GPU** | **~4.0 GB** | ✅ |
-| Margen | **1.3 GB** | ✅ |
-| whisper (ASR) | — | ~500 MB |
-| Sistema+Apps | — | ~5 GB |
-| **Total RAM** | — | **~6 GB** de 16.5 GB ✅ |
+| Piper TTS | — | ~150 MB |
+| Monitor Server | — | ~100 MB |
+| **Total GPU** | **~3.5 GB** de 5.28 GB ✅ |
+| **Total RAM** | **~250 MB** de 16.5 GB ✅ |
+| **Margen** | **~1.8 GB** | **~5.5 GB** |
+
+### 🎯 Decisión Final
+
+**Piper Python API (~45ms, CPU) es superior a OuteTTS (~13000ms, GPU) para TTS.**
+La latencia 40-50x menor y el uso de CPU (dejando VRAM para el LLM) hacen que esta sea la combinación óptima.

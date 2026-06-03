@@ -588,7 +588,7 @@ class PiperTTS:
         self.available = (self.es_voice is not None) or (self.en_voice is not None)
         if self.available:
             _safe_print(f"[PiperTTS] Listo! Latencia ~45-65ms por sintesis")
-    
+
     def synthesize(self, text, lang='es'):
         """Sintetiza texto usando el modelo precargado.
         Retorna bytes WAV o None si falla.
@@ -659,6 +659,88 @@ class PiperTTS:
         self.en_voice = None
         self.available = False
         _safe_print("[PiperTTS] Modelos liberados")
+
+
+# ── ASR (Speech-to-Text) con faster-whisper ─────────────────────
+# Usa faster-whisper (Whisper via CTranslate2) para transcripción
+# de audio. Modelo tiny (~75 MB RAM, muy rápido en CPU).
+
+HAVE_FASTER_WHISPER = False
+_asr_model = None
+_asr_lock = threading.Lock()
+
+
+def _find_wav_data_offset(audio_bytes):
+    """Encuentra el offset de los datos PCM en un WAV buscando 'data' chunk.
+    
+    La mayoría de WAVs tienen header de 44 bytes, pero algunos incluyen
+    chunks adicionales (fact, list, etc.). Esta función es más robusta.
+    """
+    data_pos = audio_bytes.find(b'data', 12)  # buscar después de "WAVE" header
+    if data_pos >= 0:
+        return data_pos + 8  # 4 bytes 'data' + 4 bytes size
+    return 44  # fallback: header estándar de 44 bytes
+try:
+    from faster_whisper import WhisperModel
+    HAVE_FASTER_WHISPER = True
+except ImportError:
+    HAVE_FASTER_WHISPER = False
+    _safe_print("[!] faster-whisper no instalado. Usando whisper.cpp.")
+    _safe_print("    pip install faster-whisper")
+
+
+def _asr_transcribe(audio_bytes, language="auto"):
+    """Transcribe audio WAV usando faster-whisper.
+    Retorna (texto, segmentos, error_msg).
+    Los primeros 44 bytes son el header WAV, el resto es PCM.
+    """
+    global _asr_model
+    if _asr_model is None:
+        return None, None, "ASR model no cargado"
+    try:
+        # Parse WAV header para obtener sample_rate
+        sample_rate = 16000  # default
+        if len(audio_bytes) >= 44:
+            # Sample rate está en bytes 24-27 del WAV
+            sample_rate = struct.unpack_from('<I', audio_bytes, 24)[0]
+        
+        # Extraer PCM data (búsqueda robusta de 'data' chunk)
+        pcm_offset = _find_wav_data_offset(audio_bytes)
+        pcm_data = audio_bytes[pcm_offset:] if len(audio_bytes) > pcm_offset else audio_bytes[44:]
+        
+        # Convertir bytes PCM a float32 numpy array (normalizado a [-1, 1])
+        pcm_int16 = np.frombuffer(pcm_data, dtype=np.int16)
+        if len(pcm_int16) == 0:
+            return None, None, "Audio vacío"
+        pcm_float32 = pcm_int16.astype(np.float32) / 32768.0
+        
+        # Transcribir (thread-safe)
+        lang_code = None if language == "auto" else language
+        with _asr_lock:
+            segments, info = _asr_model.transcribe(
+                pcm_float32,
+                language=lang_code,
+                beam_size=1,
+                vad_filter=True,
+                vad_parameters=dict(min_silence_duration_ms=300),
+            )
+        
+        detected_lang = info.language if info else language
+        
+        seg_list = []
+        full_text = []
+        for seg in segments:
+            seg_list.append({
+                "text": seg.text.strip(),
+                "start": round(seg.start, 2),
+                "end": round(seg.end, 2),
+            })
+            full_text.append(seg.text.strip())
+        
+        text = " ".join(full_text).strip()
+        return text, seg_list, None
+    except Exception as e:
+        return None, None, str(e)[:300]
 
 
 # ── Piper Persistent Server (Fallback) ──────────────────────────
@@ -1273,145 +1355,143 @@ class Handler(SimpleHTTPRequestHandler):
             self._json_response({"error": str(e)[:200]})
 
     def _handle_asr(self, body):
-        """Recibe audio WAV, ejecuta whisper.cpp y devuelve transcripción."""
+        """Recibe audio WAV, transcribe con faster-whisper y devuelve texto.
+        
+        Usa faster-whisper (Python API, modelo tiny en CPU) como método
+        primario. Caída a whisper-cli.exe si faster-whisper no está disponible.
+        
+        Input:  {"audio": "base64_wav", "lang": "es|en|ja|auto"}  o raw WAV
+        Output: {"text": "...", "segments": [...], "language": "..."}
+        """
+        global _asr_model
         project_root = Path(__file__).parent
         whisper_exe = project_root / "bin" / "whisper" / "Release" / "whisper-cli.exe"
-        model_path = project_root / "models" / "ggml-tiny.bin"
-
-        if not whisper_exe.exists():
-            self._json_response({"error": "whisper-cli.exe no encontrado"})
-            return
-        if not model_path.exists():
-            self._json_response({"error": "Modelo ggml-tiny.bin no encontrado"})
-            return
-
-        # ── Determine input mode: JSON or raw WAV ──
+        whisper_model_path = project_root / "models" / "ggml-tiny.bin"
+        t0 = time.time()
+        lang = "auto"
+        
+        # ── Parse input: JSON or raw WAV ──
         is_json = False
         data = None
         raw_audio = body
-
-        if len(body) > 0 and body[0:1] in (b'{', b'['):
+        if len(body) > 4 and body[0:1] in (b'{', b'['):
             try:
                 data = json.loads(body)
                 is_json = True
             except Exception:
                 is_json = False
-
-        def _run_whisper(wav_path, language="auto"):
-            """Helper: ejecuta whisper-cli y devuelve (text, segments)."""
-            cmd = [
-                str(whisper_exe), "-m", str(model_path),
-                "-f", str(wav_path), "-l", language,
-                "-np", "-t", "4", "--no-prints",
-            ]
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            try:
-                stdout, stderr = proc.communicate(timeout=30)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                return None, "whisper.cpp timed out (>30s)"
-
-            if proc.returncode != 0:
-                err_text = stderr.decode('utf-8', errors='replace')[:200]
-                return None, f"whisper fallo (codigo {proc.returncode}): {err_text}"
-
-            output_text = stdout.decode('utf-8', errors='replace').strip()
-            segments = []
-            full_text = ""
-            for line in output_text.split('\n'):
-                line = line.strip()
-                if not line:
-                    continue
-                m = re.match(r'^\[\d{2}:\d{2}:\d{2}\.\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}\.\d{3}\](.*)', line)
-                if m:
-                    seg_text = m.group(1).strip()
-                    if seg_text:
-                        segments.append({"text": seg_text})
-                        full_text += seg_text + " "
-                else:
-                    if line and not line.startswith('['):
-                        segments.append({"text": line})
-                        full_text += line + " "
-            full_text = full_text.strip() or output_text
-            return (full_text, segments), None
-
+        
         if is_json and data:
-            # ── JSON mode ──
+            # JSON mode: check for echo test
             text = data.get("text", "")
             lang = data.get("lang", "auto")
-
             if text:
-                # Text mode: echo back (for testing)
+                # Text echo mode (testing)
                 self._json_response({"text": text, "segments": [{"text": text}]})
                 return
-
-            # Base64 audio mode
+            
+            # Base64 audio
             audio_b64 = data.get("audio", "")
             if not audio_b64:
-                self._json_response({"error": "No se recibio audio"})
+                self._json_response({"error": "No se recibió audio"})
                 return
-
-            request_id = str(int(time.time() * 1000))
-            (project_root / "tmp").mkdir(exist_ok=True)
-            input_file = project_root / "tmp" / f"asr_{request_id}.wav"
-
             try:
-                audio_bytes = base64.b64decode(audio_b64)
-                input_file.write_bytes(audio_bytes)
+                raw_audio = base64.b64decode(audio_b64)
             except Exception as e:
-                self._json_response({"error": f"Error decodificando audio: {str(e)[:100]}"})
+                self._json_response({"error": f"Error decodificando: {str(e)[:100]}"})
                 return
-
-            if input_file.stat().st_size < 100:
-                input_file.unlink(missing_ok=True)
-                self._json_response({"error": "Audio demasiado pequeno (<100 bytes)"})
-                return
-
-            _safe_print(f"[ASR] {input_file.stat().st_size} bytes - transcribiendo...")
-            result, error = _run_whisper(input_file, lang)
-
+        
+        if len(raw_audio) < 100:
+            self._json_response({"error": "Audio demasiado pequeño"})
+            return
+        
+        file_size = len(raw_audio)
+        _safe_print(f"[ASR] {file_size} bytes - transcribiendo...")
+        
+        # ── PRIMARY: faster-whisper (Python API) ──
+        text_result = None
+        segments_result = None
+        error_msg = None
+        method_used = "faster-whisper"
+        
+        if HAVE_FASTER_WHISPER and _asr_model is not None:
             try:
-                input_file.unlink(missing_ok=True)
-            except Exception:
-                pass
-
-            if error:
-                add_log("asr_error", error)
-                self._json_response({"error": error})
-                return
-
-            text_result, segments = result
-            add_log("asr", f"{len(text_result)} chars: {text_result[:100]}")
-            _safe_print(f"[ASR] {len(text_result)} chars transcritos")
-            self._json_response({"text": text_result, "segments": segments, "language": lang})
-
-        else:
-            # ── Raw audio upload ──
-            if len(raw_audio) < 100:
-                self._json_response({"error": "Audio demasiado pequeno"})
-                return
-
-            request_id = str(int(time.time() * 1000))
-            (project_root / "tmp").mkdir(exist_ok=True)
-            input_file = project_root / "tmp" / f"asr_{request_id}.wav"
-            input_file.write_bytes(raw_audio)
-
-            _safe_print(f"[ASR] (raw) {input_file.stat().st_size} bytes - transcribiendo...")
-            result, error = _run_whisper(input_file, "auto")
-
+                text_result, segments_result, error_msg = _asr_transcribe(raw_audio, lang)
+            except Exception as e:
+                error_msg = str(e)[:200]
+            
+            if text_result:
+                _safe_print(f"[ASR] faster-whisper: {len(text_result)} chars en {(time.time()-t0)*1000:.0f}ms")
+        
+        # ── FALLBACK: whisper-cli.exe ──
+        if not text_result and whisper_exe.exists() and whisper_model_path.exists():
+            method_used = "whisper-cli"
             try:
-                input_file.unlink(missing_ok=True)
-            except Exception:
-                pass
-
-            if error:
-                self._json_response({"error": error})
-                return
-
-            text_result, segments = result
-            add_log("asr", f"{len(text_result)} chars: {text_result[:100]}")
-            _safe_print(f"[ASR] {len(text_result)} chars transcritos")
-            self._json_response({"text": text_result, "segments": [], "language": "auto"})
+                # Guardar WAV temporal
+                request_id = str(int(time.time() * 1000))
+                (project_root / "tmp").mkdir(exist_ok=True)
+                input_file = project_root / "tmp" / f"asr_{request_id}.wav"
+                input_file.write_bytes(raw_audio)
+                
+                cmd = [
+                    str(whisper_exe), "-m", str(whisper_model_path),
+                    "-f", str(input_file), "-l", lang,
+                    "-np", "-t", "4", "--no-prints",
+                ]
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                try:
+                    stdout, stderr = proc.communicate(timeout=30)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    error_msg = "whisper.cpp timed out"
+                    stdout = b""
+                
+                try:
+                    input_file.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                
+                if proc.returncode == 0 and stdout:
+                    output_text = stdout.decode('utf-8', errors='replace').strip()
+                    segments_result = []
+                    full_text = []
+                    for line in output_text.split('\n'):
+                        line = line.strip()
+                        if not line:
+                            continue
+                        m = re.match(r'^\[\d{2}:\d{2}:\d{2}\.\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}\.\d{3}\](.*)', line)
+                        if m:
+                            seg_text = m.group(1).strip()
+                            if seg_text:
+                                segments_result.append({"text": seg_text})
+                                full_text.append(seg_text)
+                        elif not line.startswith('['):
+                            segments_result.append({"text": line})
+                            full_text.append(line)
+                    text_result = " ".join(full_text).strip() or output_text
+                    error_msg = None
+                else:
+                    err_text = stderr.decode('utf-8', errors='replace')[:200]
+                    error_msg = f"whisper falló (código {proc.returncode}): {err_text}"
+            except Exception as e:
+                error_msg = str(e)[:200]
+        
+        # ── Result ──
+        duration_ms = round((time.time() - t0) * 1000)
+        if not text_result:
+            error_msg = error_msg or "ASR no disponible (ni faster-whisper ni whisper-cli.exe)"
+            add_log("asr_error", error_msg, duration_ms=duration_ms, language=lang, method=method_used)
+            self._json_response({"error": error_msg})
+            return
+        
+        add_log("asr", f"{len(text_result)} chars en {duration_ms}ms: {text_result[:100]}",
+                duration_ms=duration_ms, char_count=len(text_result), language=lang, method=method_used)
+        self._json_response({
+            "text": text_result,
+            "segments": segments_result or [],
+            "language": lang,
+            "duration_ms": duration_ms,
+        })
 
     def _handle_tts(self, body):
         """Ejecuta Piper TTS con el texto recibido y devuelve el WAV."""
@@ -1553,6 +1633,17 @@ def main():
     _safe_print(f"{'='*50}")
     _safe_print("  Presiona Ctrl+C para detener\n")
 
+    # Inicializar ASR (faster-whisper modelo tiny en CPU)
+    global _asr_model
+    if HAVE_FASTER_WHISPER:
+        try:
+            t0 = time.time()
+            _asr_model = WhisperModel("tiny", device="cpu", compute_type="int8")
+            _safe_print(f"  [ASR] faster-whisper tiny cargado en {(time.time()-t0)*1000:.0f}ms")
+        except Exception as e:
+            _safe_print(f"  [!] Error cargando faster-whisper: {e}")
+            _asr_model = None
+    
     # Inicializar PiperTTS (modelos precargados en memoria via Python API)
     global _piper_tts, _piper_es, _piper_en, _piper_exe_path
     try:
