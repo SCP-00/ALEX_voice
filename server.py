@@ -1737,8 +1737,8 @@ def main():
     if HAVE_FASTER_WHISPER:
         try:
             t0 = time.time()
-            _asr_model = WhisperModel("tiny", device="cpu", compute_type="int8")
-            _safe_print(f"  [ASR] faster-whisper tiny cargado en {(time.time()-t0)*1000:.0f}ms")
+            _asr_model = WhisperModel("base", device="cpu", compute_type="int8")
+            _safe_print(f"  [ASR] faster-whisper base cargado en {(time.time()-t0)*1000:.0f}ms")
         except Exception as e:
             _safe_print(f"  [!] Error cargando faster-whisper: {e}")
             _asr_model = None
