@@ -18,8 +18,8 @@ Usuario → Web UI (plan-b) → B/server.py (proxy) → llama-server (GPU)
 | Componente | Tecnología | Latencia | Estado |
 |:-----------|:-----------|:--------:|:------:|
 | **LLM** | Qwen3.5-2B-Q8 (GPU, ~3.0 GB VRAM) | 21-22 tok/s | ✅ |
-| **TTS** | Piper Python API (CPU, modelos en memoria) | **~45ms** | ✅ |
-| **TTS Streaming** | Piper chunked transfer (CPU) | Primer chunk ~45ms | ✅ |
+| **TTS** | **Kokoro-82M** (CPU, primario) + Piper (fallback) | Streaming ~45-300ms | ✅ |
+| **TTS Streaming** | Kokoro streaming real + Piper chunked | Primer chunk ~100-300ms | ✅ |
 | **ASR** | faster-whisper base/small (CPU, auto-switch) | ~36-162ms | ✅ |
 | **Caché** | LRU (50 entradas, thread-safe) | Hit: 0ms | ✅ |
 | **Frontend** | plan-b/index.html (puerto 3001) | — | ✅ |
@@ -54,8 +54,10 @@ Usuario → Web UI (plan-b) → B/server.py (proxy) → llama-server (GPU)
 - [x] Pipeline completo: Audio → ASR → LLM → TTS
 
 ### Fase 4 ✅ — Optimización (Plan B exclusivo)
+- [x] **Kokoro-82M** como TTS principal (voz natural, 82M params)
 - [x] **Caché LRU** de respuestas frecuentes (50 entradas, thread-safe)
-- [x] **Streaming TTS** (primer chunk audible en ~45ms)
+- [x] **Streaming TTS** (Kokoro streaming real, primer chunk ~100-300ms)
+- [x] **Fallback 3 niveles**: Kokoro → Piper Python API → subprocess
 - [x] `/api/cache/stats` — monitoreo de hits/misses
 - [x] `/api/cache/clear` — invalidación manual
 
@@ -66,8 +68,10 @@ Usuario → Web UI (plan-b) → B/server.py (proxy) → llama-server (GPU)
 | Saludo ("Hola") | ~2-5s (LLM) | **0ms** (caché) | ∞ |
 | Pregunta frecuente | ~2-5s (LLM) | **0ms** (caché) | ∞ |
 | Traducción corta | ~2-5s (LLM) | **0ms** (caché) | ∞ |
-| TTS normal | ~45ms | — | — |
-| TTS streaming | **~45ms** primer chunk | — | — |
+| TTS Kokoro (EN) | ~1.2s genera 3s audio (2.5x) | Streaming: ~300ms primer chunk | 🎵 Voz natural |
+| TTS Kokoro (ES) | ~2.3s genera 2.3s audio (1.0x) | Streaming: ~300ms primer chunk | 🎵 Voz natural |
+| TTS Piper (fallback) | **~45ms** | — | — |
+| TTS streaming Kokoro | **~200-300ms** primer chunk | — | 🎵 Voz natural |
 | ASR (ES/EN) | ~36ms | — | — |
 | ASR (JA, primera vez) | ~1.4s (carga small) | ~162ms (subsecuente) | 8.6x |
 
@@ -101,8 +105,8 @@ http://localhost:3001
 | Endpoint | Método | Descripción |
 |:---------|:------:|:-----------|
 | `/api/chat` | POST | Chat proxy a llama-server con caché LRU |
-| `/api/tts` | POST | TTS Piper (~45ms, devuelve WAV) |
-| `/api/tts/stream` | POST | TTS streaming (raw PCM chunked) |
+| `/api/tts` | POST | TTS Kokoro-82M (primario) → Piper (fallback, devuelve WAV) |
+| `/api/tts/stream` | POST | TTS streaming (Kokoro primero, Piper fallback) |
 | `/api/asr` | POST | ASR faster-whisper (base/small auto-switch) |
 | `/api/stats` | GET | Estadísticas en vivo (GPU/CPU/RAM/LLM) |
 | `/api/cache/stats` | GET | Estadísticas de caché LRU |
@@ -132,8 +136,10 @@ Alex_Voice/
 |:----------|:--------:|:------|
 | Chat (caché hit) | **0ms** | Preguntas frecuentes |
 | Chat (LLM) | ~2-5s | Depende de longitud |
-| TTS Piper | **~45ms** | Modelos en memoria |
-| TTS streaming | **~45ms** | Primer chunk |
+| TTS Kokoro (EN) | **~1.2s** (3s audio) | 2.5x real-time — streaming natural |
+| TTS Kokoro (ES) | **~2.3s** (2.3s audio) | 1.0x real-time — justo a tiempo |
+| TTS streaming Kokoro | **~200-300ms** | Primer chunk en cuanto se genera |
+| TTS Piper (fallback) | **~45ms** | Modelos en memoria — respaldo rápido |
 | ASR base (ES/EN) | **~36ms** | faster-whisper |
 | ASR small (JA) | **~82ms** | Auto-switch |
 | End-to-end (típico) | **~1.2s** | LLM ~1s + TTS ~45ms |
