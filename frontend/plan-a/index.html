@@ -91,6 +91,15 @@ body{font-family:'Space Grotesk',sans-serif;background:var(--bg);color:var(--tex
 .gpu-temp-bar{display:flex;align-items:center;gap:6px;font-size:11px}
 .listen-lang-select{padding:3px 6px;border-radius:4px;border:1px solid var(--border);background:var(--surface3);color:var(--text);font-size:10px;font-family:inherit;outline:none;width:100%}
 
+/* ── VAD Meter ───────────────────────── */
+.vad-meter{display:flex;align-items:center;gap:6px;height:14px}
+.vad-meter-track{flex:1;height:4px;background:var(--surface3);border-radius:3px;overflow:hidden}
+.vad-meter-fill{height:100%;border-radius:3px;transition:width .04s linear;min-width:0}
+.vad-meter-fill.idle{background:var(--textMuted)}
+.vad-meter-fill.active{background:linear-gradient(90deg,var(--green),var(--accent))}
+.vad-meter-fill.speaking{background:linear-gradient(90deg,var(--accent2),var(--accent),var(--accent3))}
+.vad-meter-label{font-size:8px;color:var(--textMuted);min-width:32px;text-align:right;font-family:'JetBrains Mono',monospace}
+
 /* ── Main Layout ──────────────────────── */
 .main{flex:1;display:flex;flex-direction:column;min-width:0}
 .header{padding:10px 20px;border-bottom:1px solid var(--border);background:var(--surface);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -238,6 +247,13 @@ body{font-family:'Space Grotesk',sans-serif;background:var(--bg);color:var(--tex
         <option value="chrome">🗣️ Chrome ASR</option>
         <option value="whisper">🤖 Whisper ASR</option>
       </select>
+    </div>
+    <!-- VAD Level Meter -->
+    <div class="vad-meter" id="vadMeter">
+      <div class="vad-meter-track">
+        <div class="vad-meter-fill" id="vadMeterFill" style="width:0%"></div>
+      </div>
+      <span class="vad-meter-label" id="vadMeterLabel">— dB</span>
     </div>
     <div class="listen-transcript" id="listenTranscript">—</div>
   </div>
@@ -588,6 +604,373 @@ let _streamingCtx = null;  // AudioContext for streaming playback
 let _streamingScheduleTime = 0;
 let _streamingReader = null;  // reader for aborting
 let _streamingAborted = false;
+
+// ═══════════════════════════════════════════════════════════
+// AudioVAD — Energy-based Voice Activity Detection mejorado
+// ═══════════════════════════════════════════════════════════
+// Características:
+// - Umbral adaptativo: aprende el piso de ruido ambiental dinámicamente
+// - Score de confianza: qué tan seguro está de que es voz real
+// - Filtro de sostenimiento: requiere energía sostenida, no picos
+// - Métodos públicos: getNoiseFloor(), getConfidence(), getSpeechDuration()
+
+class AudioVAD {
+  constructor(opts = {}) {
+    // Configuración
+    this.initialThreshold = opts.threshold || 0.025;  // RMS inicial
+    this.minSpeechMs = opts.minSpeechMs || 300;       // ms de energía sostenida para declarar habla
+    this.holdMs = opts.holdMs || 1000;                // ms de silencio para declarar fin
+    this.adaptRate = opts.adaptRate || 0.01;           // qué tan rápido se adapta el noise floor
+    this.confidenceThreshold = opts.confidenceThreshold || 0.5;  // mínimo para considerar "voz confiable"
+    
+    // Estado
+    this.isSpeaking = false;
+    this._energyStart = 0;
+    this._silenceStart = 0;
+    this._currentRms = 0;
+    this._noiseFloor = 0.015;     // piso de ruido estimado (adaptativo)
+    this._dynamicThreshold = this.initialThreshold;
+    this._confidence = 0;         // 0.0 - 1.0
+    this._speechDuration = 0;     // ms de habla continua actual
+    this._framesSinceSpeech = 0;  // frames sin detectar voz
+    this._adaptFrames = 0;        // frames de calibración del noise floor
+    
+    // Callbacks
+    this.onSpeechStart = opts.onSpeechStart || null;
+    this.onSpeechEnd = opts.onSpeechEnd || null;
+    this.onLevel = opts.onLevel || null;  // callback(rms, db, isSpeaking, confidence, noiseFloor)
+  }
+
+  /** Process a frame of Float32 samples */
+  processFrame(samples) {
+    // RMS energy
+    let sumSq = 0;
+    for (let i = 0; i < samples.length; i++) {
+      sumSq += samples[i] * samples[i];
+    }
+    const rms = Math.sqrt(sumSq / samples.length);
+    this._currentRms = rms;
+    const db = rms > 0 ? 20 * Math.log10(rms) : -100;
+    const now = performance.now();
+
+    // ── Actualizar noise floor adaptativo ──
+    this._adaptFrames++;
+    if (this._adaptFrames < 100) {
+      // Primera calibración (100 frames ≈ 1.6s): usar el mínimo observado
+      if (rms < this._noiseFloor || this._adaptFrames === 1) {
+        this._noiseFloor = rms;
+      } else {
+        this._noiseFloor += (rms - this._noiseFloor) * 0.05;
+      }
+    } else {
+      // Calibración continua: cuando no hay habla, ajustar hacia abajo
+      if (!this.isSpeaking && rms < this._noiseFloor * 1.5) {
+        this._noiseFloor += (rms - this._noiseFloor) * this.adaptRate;
+      }
+      // Si el piso sube persistentemente (cambio de ambiente), adaptarse
+      if (!this.isSpeaking && this._framesSinceSpeech > 50) {
+        this._noiseFloor += (rms - this._noiseFloor) * (this.adaptRate * 0.5);
+      }
+    }
+    
+    // Noise floor mínimo sanitario
+    this._noiseFloor = Math.max(this._noiseFloor, 0.001);
+    
+    // ── Umbral dinámico ──
+    // = noise floor * 2.5 (margen), nunca menor que initialThreshold
+    this._dynamicThreshold = Math.max(
+      this.initialThreshold,
+      this._noiseFloor * 2.5
+    );
+    
+    // ── Score de confianza ──
+    // Qué tan seguro estamos de que esto es voz vs ruido
+    const signalToNoise = rms / Math.max(this._noiseFloor, 0.001);
+    if (signalToNoise > 3.0) {
+      this._confidence = Math.min(1.0, (signalToNoise - 3.0) / 5.0 + 0.7);
+    } else if (signalToNoise > 1.5) {
+      this._confidence = (signalToNoise - 1.5) / 1.5 * 0.5;
+    } else {
+      this._confidence = Math.max(0, (signalToNoise - 0.5) / 1.0 * 0.15);
+    }
+    
+    // ── State machine mejorada ──
+    const exceedsThreshold = rms > this._dynamicThreshold;
+    
+    if (exceedsThreshold) {
+      this._framesSinceSpeech = 0;
+      
+      if (!this.isSpeaking) {
+        // Posible inicio de habla: requiere energía sostenida
+        if (this._energyStart === 0) {
+          this._energyStart = now;
+        } else {
+          const energyDuration = now - this._energyStart;
+          if (energyDuration >= this.minSpeechMs) {
+            // Habla confirmada! Energía sostenida por minSpeechMs
+            this.isSpeaking = true;
+            this._speechDuration = 0;
+            this._silenceStart = 0;
+            this._energyStart = 0;
+            if (this.onSpeechStart) this.onSpeechStart();
+          }
+        }
+      } else {
+        // Hablando — extender duración, resetear timer de silencio
+        this._silenceStart = 0;
+        this._energyStart = 0;
+        this._speechDuration += 16; // ~60fps
+      }
+    } else {
+      this._framesSinceSpeech++;
+      
+      if (this.isSpeaking) {
+        if (this._silenceStart === 0) {
+          this._silenceStart = now;
+        } else {
+          // Doble verificación: si la confianza era baja y el "silencio"
+          // dura poco, no declarar fin inmediatamente (reduce falsos)
+          const silenceDuration = now - this._silenceStart;
+          if (silenceDuration >= this.holdMs) {
+            // Silencio confirmado por holdMs → fin de habla
+            this.isSpeaking = false;
+            this._speechDuration = 0;
+            this._energyStart = 0;
+            if (this.onSpeechEnd) this.onSpeechEnd();
+          }
+        }
+      } else {
+        // En reposo — resetear acumuladores
+        this._energyStart = 0;
+        this._speechDuration = 0;
+      }
+    }
+
+    // Callback con info enriquecida
+    if (this.onLevel) {
+      this.onLevel(rms, db, this.isSpeaking, this._confidence, this._noiseFloor);
+    }
+    
+    return {
+      rms,
+      db,
+      isSpeaking: this.isSpeaking,
+      confidence: this._confidence,
+      noiseFloor: this._noiseFloor,
+      threshold: this._dynamicThreshold
+    };
+  }
+
+  /** Obtener duración de la sesión de habla actual en ms */
+  getSpeechDuration() {
+    return this._speechDuration;
+  }
+  
+  /** Obtener duración del silencio actual en ms */
+  getSilenceDuration() {
+    if (this._silenceStart === 0) return 0;
+    return performance.now() - this._silenceStart;
+  }
+  
+  /** Obtener el piso de ruido actual */
+  getNoiseFloor() {
+    return this._noiseFloor;
+  }
+  
+  /** Obtener nivel de confianza (0-1) de que la señal es voz */
+  getConfidence() {
+    return this._confidence;
+  }
+  
+  /** Obtener umbral dinámico actual */
+  getDynamicThreshold() {
+    return this._dynamicThreshold;
+  }
+  
+  get currentRms() { return this._currentRms; }
+
+  reset() {
+    this.isSpeaking = false;
+    this._energyStart = 0;
+    this._silenceStart = 0;
+    this._speechDuration = 0;
+    this._framesSinceSpeech = 0;
+    this._confidence = 0;
+  }
+
+  /** Reiniciar calibración de noise floor (útil al cambiar de micrófono/entorno) */
+  recalibrate() {
+    this._noiseFloor = 0.015;
+    this._dynamicThreshold = this.initialThreshold;
+    this._adaptFrames = 0;
+    this._confidence = 0;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Filtro de falsos positivos para Chrome ASR
+// ═══════════════════════════════════════════════════════════
+// Chrome SpeechRecognition produce "artefactos" en silencio:
+// palabras sueltas como "the", "a", "and", "I", "he", etc.
+// Este filtro rechaza transcripciones que son solo artefactos.
+
+const CHROME_ASR_ARTIFACTS = new Set([
+  // Artículos y pronombres (los más comunes en falsos positivos)
+  'the','a','an','and','i','he','she','it','we','you','they','me','him','her','them',
+  'my','your','his','its','our','their','this','that','these','those',
+  // Preposiciones
+  'to','for','of','in','on','at','by','with','from','up','down','out','off','over',
+  'as','into','through','during','before','after','between','under','about',
+  // Verbos comunes
+  'is','are','was','were','be','been','being','have','has','had','do','does','did',
+  'will','would','could','should','may','might','can','shall',
+  // Conjunciones y partículas
+  'or','but','if','so','no','not','nor','yet','because','while','when','where',
+  'why','how','what','which','who','whom','whose',
+  // Muletillas y sonidos de relleno
+  'yeah','uh','um','oh','ok','okay','mm','hmm','ah','eh','er','huh','nah',
+  'mm-hmm','uh-huh','uh-uh','nope','yep','hey','hi','ha','wow','ooh','ahh',
+  // Palabras cortas comunes en falsos
+  'am','pm','vs','vs.','etc','inc','ltd','co','dept','ave','st','rd','dr',
+  'mr','mrs','ms','jr','sr','iii','ii','iv'
+]);
+
+/**
+ * Evalúa si un texto de Chrome ASR es probablemente voz real o un falso positivo.
+ * Retorna { isVoice: boolean, reason: string }
+ */
+function evaluateTranscript(text, vadConfidence, speakingMs) {
+  const t = (text || '').trim();
+  if (!t) return { isVoice: false, reason: 'empty' };
+  
+  const words = t.toLowerCase().split(/[\s,.!?;:]+/).filter(w => w.length > 0);
+  const wordCount = words.length;
+  const charCount = t.length;
+  
+  // 1. Texto largo (>15 chars) casi siempre es voz real
+  if (charCount > 15) return { isVoice: true, reason: 'long_text' };
+  
+  // 2. Múltiples palabras (3+) → voz real
+  if (wordCount >= 3) return { isVoice: true, reason: 'multiple_words' };
+  
+  // 3. Palabra única: revisar si es artefacto
+  if (wordCount === 1) {
+    const word = words[0];
+    
+    // Si VAD confirma habla activa con alta confianza, aceptar
+    if (vadConfidence > 0.6) return { isVoice: true, reason: 'vad_high_conf' };
+    if (vadConfidence > 0.4 && speakingMs > 500) return { isVoice: true, reason: 'vad_sustained' };
+    
+    // Si la palabra tiene números o mayúsculas inusuales, podría ser real
+    if (/[A-ZÑÁÉÍÓÚÀÈÌÒÙ]/.test(word) && word.length > 2) return { isVoice: true, reason: 'proper_noun' };
+    
+    // Revisar si es artefacto conocido
+    if (CHROME_ASR_ARTIFACTS.has(word)) {
+      return { isVoice: false, reason: 'artifact:' + word };
+    }
+    
+    // Palabra corta (1-2 letras) sin soporte VAD → probable falso
+    if (word.length <= 2) return { isVoice: false, reason: 'too_short' };
+    
+    // Palabras de 3+ letras: aceptar si VAD tiene algo de confianza
+    if (vadConfidence > 0.3) return { isVoice: true, reason: 'vad_low_conf' };
+    
+    // Sin VAD y palabra media: incierto, asumir voz
+    return { isVoice: true, reason: 'unknown_word' };
+  }
+  
+  // 4. Dos palabras: aceptar si no son ambos artefactos
+  if (wordCount === 2) {
+    const artifactCount = words.filter(w => CHROME_ASR_ARTIFACTS.has(w)).length;
+    if (artifactCount >= 2 && vadConfidence < 0.4) {
+      return { isVoice: false, reason: 'two_artifacts' };
+    }
+    return { isVoice: true, reason: 'two_words' };
+  }
+  
+  return { isVoice: true, reason: 'default' };
+}
+
+// ═══════════════════════════════════════════════════════════
+// VAD Meter UI
+// ═══════════════════════════════════════════════════════════
+function _updateVadMeter(rms, db, isSpeaking, confidence, noiseFloor) {
+  const fill = document.getElementById('vadMeterFill');
+  const label = document.getElementById('vadMeterLabel');
+  
+  if (!fill || !label) return;
+  
+  // Mapear RMS a porcentaje de la barra (escala logarítmica)
+  // RMS 0.0 → 0%, RMS ~0.3 → 100%
+  const pct = Math.min(100, Math.max(0, (rms / 0.3) * 100));
+  fill.style.width = pct + '%';
+  
+  // Color según estado
+  if (isSpeaking) {
+    fill.className = 'vad-meter-fill speaking';
+  } else if (confidence > 0.3) {
+    fill.className = 'vad-meter-fill active';
+  } else {
+    fill.className = 'vad-meter-fill idle';
+  }
+  
+  // Label: mostrar dB + confianza + noise floor cuando sea relevante
+  if (db < -60) {
+    label.textContent = '— dB';
+  } else if (isSpeaking) {
+    const confPct = Math.round(confidence * 100);
+    label.textContent = `${db.toFixed(0)} dB · ${confPct}%`;
+  } else if (confidence > 0.2) {
+    label.textContent = `${db.toFixed(0)} dB`;
+  } else {
+    label.textContent = `${db.toFixed(0)} dB`;
+  }
+}
+
+// VAD instances for each engine
+let _chromeVad = null;   // VAD for Chrome ASR (analyzes mic stream)
+let _whisperVad = null;  // VAD for Whisper ASR
+let _vadAnalyserNode = null;  // shared AnalyserNode for mic stream
+let _vadMicStream = null;     // shared mic stream reference
+let _vadFrameId = null;       // requestAnimationFrame id
+
+function _startVadAnalysis(stream, vadInstance) {
+  // Connect an AnalyserNode to the stream for VAD analysis
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const source = audioCtx.createMediaStreamSource(stream);
+  const analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 256;
+  source.connect(analyser);
+  
+  _vadAnalyserNode = { ctx: audioCtx, analyser, source };
+  _vadMicStream = stream;
+  
+  const bufferLength = analyser.frequencyBinCount;
+  const dataArray = new Float32Array(bufferLength);
+  
+  function analyzeFrame() {
+    if (!vadInstance) return;
+    analyser.getFloatTimeDomainData(dataArray);
+    vadInstance.processFrame(dataArray);
+    _vadFrameId = requestAnimationFrame(analyzeFrame);
+  }
+  _vadFrameId = requestAnimationFrame(analyzeFrame);
+}
+
+function _stopVadAnalysis() {
+  if (_vadFrameId) {
+    cancelAnimationFrame(_vadFrameId);
+    _vadFrameId = null;
+  }
+  if (_vadAnalyserNode) {
+    try {
+      _vadAnalyserNode.source.disconnect();
+      _vadAnalyserNode.ctx.close();
+    } catch(e) {}
+    _vadAnalyserNode = null;
+  }
+  _vadMicStream = null;
+}
 
 // Active Listening
 let listeningActive = false;
@@ -1829,6 +2212,11 @@ function startRecognition() {
   recognition.interimResults = true;
   recognition.lang = document.getElementById('listenLang').value;
 
+  // ── VAD: filtrar resultados falsos positivos ──
+  // Usamos VAD energético + filtro de artefactos para eliminar
+  // falsos positivos de Chrome SpeechRecognition ("the", "a", etc.)
+  let vadLastSpeechTime = 0;
+  
   recognition.onresult = (event) => {
     let finalTranscript = '';
     let interimTranscript = '';
@@ -1839,12 +2227,44 @@ function startRecognition() {
       else interimTranscript += result[0].transcript;
     }
 
+    // ── VAD GATE MEJORADO ──
+    const vad = _chromeVad;
+    const vadActive = vad && vad.isSpeaking;
+    const vadConfidence = vad ? vad.getConfidence() : 0;
+    const speakingMs = vad ? vad.getSpeechDuration() : 0;
+    const now = Date.now();
+    const recentSpeech = (now - vadLastSpeechTime) < 2000;
+    
+    if (vadActive) {
+      vadLastSpeechTime = now;
+    }
+    
+    // Evaluar si el texto es voz real o falso positivo
+    const evalResult = evaluateTranscript(finalTranscript, vadConfidence, speakingMs);
+    
+    // Si es falso positivo, ignorar completamente
+    if (!evalResult.isVoice && !vadActive && !recentSpeech) {
+      listenTranscript = '';
+      return;
+    }
+    
+    // Si VAD no detecta voz y no hubo voz reciente y el texto es corto, ignorar
+    if (!vadActive && !recentSpeech) {
+      if (evalResult.reason.startsWith('artifact') || finalTranscript.trim().length < 3) {
+        listenTranscript = '';
+        return;
+      }
+    }
+    
+    // Actualizar transcripción en UI siempre (para feedback visual)
     listenTranscript = finalTranscript || interimTranscript;
     document.getElementById('listenTranscript').textContent = listenTranscript
       ? '🗣️ ' + listenTranscript : '🎤 Escuchando...';
 
     const text = finalTranscript.trim();
-    if (text.length > 2 && text !== lastSentTranscript) {
+    
+    // Solo enviar si el texto parece voz real
+    if (text.length > 2 && text !== lastSentTranscript && evalResult.isVoice) {
       lastSentTranscript = text;
 
       // Interrupt if generating
@@ -1890,11 +2310,55 @@ function startRecognition() {
   };
 
   try { recognition.start(); } catch (e) { console.warn('Rec start failed:', e); }
+  
+  // Iniciar VAD si no está corriendo
+  _ensureVadRunning('chrome');
 }
 
 function stopRecognition() {
   if (recognition) { try { recognition.stop(); } catch(e) {} recognition = null; }
   document.getElementById('listenTranscript').textContent = '—';
+}
+
+/**
+ * Asegura que el VAD esté analizando el micrófono en tiempo real.
+ * Comparte el mismo micrófono entre Chrome ASR y Whisper ASR.
+ */
+function _ensureVadRunning(engine) {
+  // Si ya hay análisis VAD en curso, detenerlo (para recrear con nuevo engine)
+  if (_vadAnalyserNode) {
+    // Si el engine es el mismo, no reiniciar
+    const currentEngine = _vadAnalyserNode._engine;
+    if (currentEngine === engine) return;
+    // Si cambió de engine, reiniciar (se crea un nuevo VAD abajo)
+    _stopVadAnalysis();
+  }
+  
+  navigator.mediaDevices.getUserMedia({ audio: {
+    echoCancellation: true,
+    noiseSuppression: true
+  }}).then(stream => {
+    // Crear VAD para Chrome ASR si no existe
+    if (engine === 'chrome' && !_chromeVad) {
+      _chromeVad = new AudioVAD({
+        threshold: 0.025,
+        minSpeechMs: 300,
+        holdMs: 800,
+        confidenceThreshold: 0.5,
+        onLevel: (rms, db, speaking, confidence, noiseFloor) => {
+          _updateVadMeter(rms, db, speaking, confidence, noiseFloor);
+        },
+      });
+    }
+    
+    const vad = engine === 'chrome' ? _chromeVad : _whisperVad;
+    if (vad) {
+      _vadAnalyserNode._engine = engine;
+      _startVadAnalysis(stream, vad);
+    }
+  }).catch(err => {
+    console.warn('VAD mic error:', err.message);
+  });
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1911,6 +2375,28 @@ function startWhisperRecording() {
     return;
   }
 
+  // ── Inicializar VAD para Whisper ASR ──
+  _whisperVad = new AudioVAD({
+    threshold: 0.03,         // un poco más sensible que Chrome (audio crudo)
+    minSpeechMs: 250,        // 250ms de energía sostenida
+    holdMs: 1000,            // 1s de silencio = fin de utterance
+    onSpeechStart: () => {
+      document.getElementById('listenIndicator').className = 'listen-indicator speaking';
+      document.getElementById('listenStatusText').textContent = '🔴 Hablando...';
+    },
+    onSpeechEnd: () => {
+      // Silencio detectado → procesar lo acumulado
+      if (whisperChunks.length > 0) {
+        processWhisperChunk();
+      }
+      document.getElementById('listenIndicator').className = 'listen-indicator listening';
+      document.getElementById('listenStatusText').textContent = '🟢 Procesando...';
+    },
+    onLevel: (rms, db, speaking, confidence, noiseFloor) => {
+      _updateVadMeter(rms, db, speaking, confidence, noiseFloor);
+    },
+  });
+
   navigator.mediaDevices.getUserMedia({ audio: {
     echoCancellation: true,
     noiseSuppression: true,
@@ -1922,6 +2408,9 @@ function startWhisperRecording() {
     whisperChunks = [];
     whisperRecording = true;
     whisperLastChunkTime = Date.now();
+    
+    // Iniciar análisis VAD con el mismo stream
+    _startVadAnalysis(stream, _whisperVad);
 
     // Process audio in chunks
     whisperProcessor = whisperContext.createScriptProcessor(4096, 1, 1);
@@ -1931,11 +2420,21 @@ function startWhisperRecording() {
     whisperProcessor.onaudioprocess = (event) => {
       if (!whisperRecording) return;
       const input = event.inputBuffer.getChannelData(0);
-      whisperChunks.push(new Float32Array(input));
+      
+      // VAD GATE: solo acumular si hay voz activa o hubo voz hace poco
+      // Usa getSilenceDuration() en vez de acceder a propiedad privada
+      const vad = _whisperVad;
+      const vadActive = vad && vad.isSpeaking;
+      const silenceMs = vad ? vad.getSilenceDuration() : 0;
+      const recentSpeech = vad && silenceMs < 2000;
+      
+      if (vadActive || recentSpeech) {
+        whisperChunks.push(new Float32Array(input));
+      }
 
-      // Check if it's time to send a chunk
+      // Time-based send (cada 3s de voz acumulada)
       const now = Date.now();
-      if (now - whisperLastChunkTime >= WHISPER_CHUNK_MS) {
+      if (now - whisperLastChunkTime >= WHISPER_CHUNK_MS && whisperChunks.length > 0) {
         whisperLastChunkTime = now;
         processWhisperChunk();
       }
@@ -1953,10 +2452,13 @@ function startWhisperRecording() {
 
 function stopWhisperRecording() {
   whisperRecording = false;
-  // Process any remaining audio
-  if (whisperChunks.length > 2) {
+  // Process any remaining audio only if VAD detected recent speech
+  if (whisperChunks.length > 2 && _whisperVad && _whisperVad.currentRms > 0.01) {
     processWhisperChunk();
   }
+
+  // Detener VAD
+  _whisperVad = null;
 
   if (whisperProcessor && whisperContext) {
     whisperProcessor.disconnect();
@@ -1977,6 +2479,7 @@ function stopWhisperRecording() {
   whisperChunks = [];
 
   document.getElementById('listenTranscript').textContent = '—';
+  _updateVadMeter(0, -100, false);
 }
 
 function processWhisperChunk() {

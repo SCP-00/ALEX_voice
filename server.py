@@ -754,7 +754,13 @@ def _asr_transcribe(audio_bytes, language="auto"):
                 language=lang_code,
                 beam_size=1,
                 vad_filter=True,
-                vad_parameters=dict(min_silence_duration_ms=300),
+                vad_parameters=dict(
+                    min_silence_duration_ms=500,       # más largo = menos falsos cortes
+                    speech_pad_ms=200,                  # padding alrededor de speech segments
+                    threshold=0.5,                      # umbral VAD (0-1), más alto = menos sensibilidad
+                    neg_threshold=0.35,                  # umbral negativo para salir de speech
+                    min_speech_duration_ms=200,         # mínimo 200ms de voz para considerar speech
+                ),
             )
         
         detected_lang = info.language if info else language
