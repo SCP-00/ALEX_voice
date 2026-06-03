@@ -599,6 +599,97 @@ let ttsMode = 'auto'; // 'piper' | 'outetts' | 'auto' (prefers OuteTTS for ES/EN
 let ttsGenerating = false;
 let _ttsProcessing = false; // prevent re-entrant calls to processTtsQueue
 
+// ═══════════════════════════════════════════════════════════
+// EchoGuard — Detección de eco TTS→Micrófono
+// ═══════════════════════════════════════════════════════════
+// Cuando el TTS reproduce audio por los altavoces, el micrófono
+// puede captarlo y crear un loop de retroalimentación.
+// EchoGuard bloquea ASR durante y después del TTS.
+
+const ECHO_GUARD_MS = 1800;     // ms después de TTS para bloquear ASR
+const ECHO_COOLDOWN_MS = 500;   // ms adicionales después de cada detección de eco
+let _echoGuardActive = false;    // guardia temporal activa
+let _echoGuardTimer = null;      // timeout para desactivar guardia
+let _echoCooldownTimer = null;   // timeout para cooldown adicional
+
+/** Activar guardia de eco al empezar TTS */
+function _echoGuardOn() {
+  _echoGuardActive = true;
+  if (_echoGuardTimer) {
+    clearTimeout(_echoGuardTimer);
+    _echoGuardTimer = null;
+  }
+  if (_echoCooldownTimer) {
+    clearTimeout(_echoCooldownTimer);
+    _echoCooldownTimer = null;
+  }
+}
+
+/** Desactivar guardia de eco al terminar TTS (con cooldown) */
+function _echoGuardOff() {
+  if (_echoGuardTimer) {
+    clearTimeout(_echoGuardTimer);
+  }
+  // Mantener guardia activa por ECHO_GUARD_MS después del TTS
+  _echoGuardTimer = setTimeout(() => {
+    _echoGuardActive = false;
+    _echoGuardTimer = null;
+  }, ECHO_GUARD_MS);
+}
+
+/**
+ * Verifica si un resultado de ASR debe ser ignorado por eco.
+ * Retorna { blocked: boolean, reason: string }
+ * 
+ * Estrategia:
+ * - Si guardia activa Y texto corto (<10 chars) → bloqueado (probable eco)
+ * - Si guardia activa Y texto largo → permitido (voz real del usuario)
+ * - Si pasó el cooldown → permitido
+ */
+function _echoCheck(text) {
+  if (!_echoGuardActive) return { blocked: false, reason: '' };
+  
+  const t = (text || '').trim();
+  const charCount = t.length;
+  
+  // Texto largo (>10 chars) puede atravesar la guardia (voz real del usuario)
+  if (charCount > 10) return { blocked: false, reason: 'long_text_override' };
+  
+  // Texto corto durante TTS → probable eco
+  return { blocked: true, reason: 'echo_guard' };
+}
+
+/**
+ * Activar cooldown extra después de detectar eco.
+ * Útil cuando el micrófono capta el TTS y hay reverberación.
+ */
+function _echoExtraCooldown() {
+  if (_echoCooldownTimer) {
+    clearTimeout(_echoCooldownTimer);
+  }
+  _echoGuardActive = true;
+  _echoCooldownTimer = setTimeout(() => {
+    if (!_echoGuardTimer) {
+      // Solo desactivar si no hay guardia activa de otro TTS
+      _echoGuardActive = false;
+    }
+    _echoCooldownTimer = null;
+  }, ECHO_COOLDOWN_MS);
+}
+
+/** Reiniciar estado de echo guard */
+function _echoReset() {
+  _echoGuardActive = false;
+  if (_echoGuardTimer) {
+    clearTimeout(_echoGuardTimer);
+    _echoGuardTimer = null;
+  }
+  if (_echoCooldownTimer) {
+    clearTimeout(_echoCooldownTimer);
+    _echoCooldownTimer = null;
+  }
+}
+
 // Streaming TTS state
 let _streamingCtx = null;  // AudioContext for streaming playback
 let _streamingScheduleTime = 0;
@@ -1860,6 +1951,9 @@ async function processTtsQueue() {
 }
 
 async function playAudioBlob(blob, engine) {
+  // Activar guardia de eco al reproducir audio
+  _echoGuardOn();
+  
   const url = URL.createObjectURL(blob);
   const audio = new Audio(url);
   ttsAudio = audio;
@@ -1882,12 +1976,16 @@ async function playAudioBlob(blob, engine) {
       ttsAudio = null;
       ttsIsPlaying = false;
       ttsIsPaused = false;
+      // Desactivar guardia de eco con cooldown
+      _echoGuardOff();
       resolve();
     };
     audio.onerror = () => {
       progressBar.style.width = '0%';
       ttsAudio = null;
       ttsIsPlaying = false;
+      // Desactivar guardia de eco incluso en error
+      _echoGuardOff();
       resolve();
     };
     audio.play().catch((e) => {
@@ -1908,6 +2006,9 @@ async function playTtsStreaming(text, lang) {
   
   stopTtsStreaming();
   _streamingAborted = false;
+  
+  // Activar guardia de eco al empezar streaming
+  _echoGuardOn();
   
   try {
     const resp = await fetch(TTS_PIPER_STREAM_URL, {
@@ -1989,6 +2090,8 @@ async function playTtsStreaming(text, lang) {
         document.getElementById('ttsProgressFill').style.width = '0%';
         ttsIsPlaying = false;
         updateTtsUi();
+        // Desactivar guardia de eco con cooldown
+        _echoGuardOff();
       }
     }
     
@@ -1998,6 +2101,7 @@ async function playTtsStreaming(text, lang) {
   } catch (e) {
     console.warn('Streaming TTS error:', e.message);
     stopTtsStreaming();
+    _echoGuardOff();
     return false;
   }
 }
@@ -2057,6 +2161,9 @@ function stopTtsStreaming() {
 
 function speakJapanese(text) {
   return new Promise((resolve) => {
+    // Activar guardia de eco al hablar japonés
+    _echoGuardOn();
+    
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'ja-JP';
     utterance.rate = 0.85;
@@ -2087,6 +2194,7 @@ function speakJapanese(text) {
       ttsIsPaused = false;
       window._jaUtterance = null;
       updateTtsUi();
+      _echoGuardOff();
       resolve();
     };
 
@@ -2094,6 +2202,7 @@ function speakJapanese(text) {
       window._jaUtterance = null;
       ttsIsPlaying = false;
       progressBar.style.width = '0%';
+      _echoGuardOff();
       resolve();
     };
 
@@ -2133,6 +2242,8 @@ function stopTts() {
   ttsIsPaused = false;
   ttsGenerating = false;
   document.getElementById('ttsProgressFill').style.width = '0%';
+  // Al detener TTS manualmente, activar cooldown extra por posibles reverberaciones
+  _echoExtraCooldown();
   updateTtsUi();
 }
 
@@ -2237,6 +2348,14 @@ function startRecognition() {
     
     if (vadActive) {
       vadLastSpeechTime = now;
+    }
+    
+    // ── ECHO GUARD: filtrar eco del TTS ──
+    const echoCheck = _echoCheck(finalTranscript);
+    if (echoCheck.blocked && !vadActive) {
+      // Probable eco del TTS → ignorar silenciosamente
+      listenTranscript = '';
+      return;
     }
     
     // Evaluar si el texto es voz real o falso positivo
@@ -2427,6 +2546,12 @@ function startWhisperRecording() {
       const vadActive = vad && vad.isSpeaking;
       const silenceMs = vad ? vad.getSilenceDuration() : 0;
       const recentSpeech = vad && silenceMs < 2000;
+
+      // ECHO GUARD: si el TTS esta sonando, no acumular audio (eco)
+      const echoCheck = _echoCheck('');
+      if (echoCheck.blocked && !vadActive) {
+        return; // Posible eco del TTS, descartar este chunk
+      }
       
       if (vadActive || recentSpeech) {
         whisperChunks.push(new Float32Array(input));
@@ -2452,6 +2577,10 @@ function startWhisperRecording() {
 
 function stopWhisperRecording() {
   whisperRecording = false;
+
+  // Reiniciar guardia de eco al desactivar escucha
+  _echoReset();
+
   // Process any remaining audio only if VAD detected recent speech
   if (whisperChunks.length > 2 && _whisperVad && _whisperVad.currentRms > 0.01) {
     processWhisperChunk();
