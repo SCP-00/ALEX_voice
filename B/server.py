@@ -112,6 +112,79 @@ except Exception:
     HAVE_NVML = False
     _safe_print("[B] [!] pynvml no disponible. Stats GPU no disponibles.")
 
+# ── Kokoro-82M TTS ─────────────────────────────────────────
+HAVE_KOKORO = False
+KOKORO_PIPELINES = {}  # lang_code -> KPipeline instance (lazy-loaded)
+KOKORO_LOCK = threading.Lock()
+
+try:
+    from kokoro import KPipeline
+    HAVE_KOKORO = True
+except ImportError:
+    _safe_print("[B] [!] kokoro no instalado. pip install kokoro")
+
+# Map: B language (es/en) -> Kokoro lang_code + voice
+KOKORO_CONFIG = {
+    'es': {'code': 'e', 'voice': 'ef_dora'},
+    'en': {'code': 'a', 'voice': 'af_heart'},
+}
+
+
+def _get_kokoro_pipeline(lang):
+    """Obtiene o carga lazy un pipeline Kokoro por idioma.
+    Retorna (pipeline, voice_name) o (None, None).
+    """
+    global KOKORO_PIPELINES
+    if lang not in KOKORO_CONFIG:
+        return None, None
+    cfg = KOKORO_CONFIG[lang]
+    code = cfg['code']
+    voice = cfg['voice']
+    
+    if code in KOKORO_PIPELINES:
+        return KOKORO_PIPELINES[code], voice
+    
+    with KOKORO_LOCK:
+        if code in KOKORO_PIPELINES:
+            return KOKORO_PIPELINES[code], voice
+        try:
+            t0 = time.time()
+            pipeline = KPipeline(lang_code=code, repo_id='hexgrad/Kokoro-82M')
+            elapsed = (time.time() - t0) * 1000
+            _safe_print(f"[B] [Kokoro] {lang} pipeline cargado en {elapsed:.0f}ms")
+            KOKORO_PIPELINES[code] = pipeline
+            return pipeline, voice
+        except Exception as e:
+            _safe_print(f"[B] [Kokoro] Error cargando {lang}: {e}")
+            return None, None
+
+
+def _kokoro_synthesize_stream(text, lang):
+    """Generator: sintetiza texto con Kokoro y produce tuplas (sample_rate, pcm_bytes).
+    
+    Kokoro genera audio a 24kHz en chunks por segmento de texto.
+    Cada chunk se entrega en cuanto está listo (streaming real).
+    Retorna (sample_rate, pcm_int16_bytes, is_last=False).
+    """
+    pipeline, voice = _get_kokoro_pipeline(lang)
+    if pipeline is None:
+        return
+    
+    try:
+        generator = pipeline(text, voice=voice, speed=1)
+        for gs, ps, audio in generator:
+            if audio is None or len(audio) == 0:
+                continue
+            # audio es float32 numpy a 24kHz → convertir a int16
+            audio_float32 = np.asarray(audio, dtype=np.float32)
+            # Clamp seguro a [-1, 1] antes de convertir
+            audio_float32 = np.clip(audio_float32, -1.0, 1.0)
+            audio_int16 = (audio_float32 * 32767).astype(np.int16)
+            yield (24000, audio_int16.tobytes())
+    except Exception as e:
+        _safe_print(f"[B] [Kokoro] Stream error: {e}")
+
+
 # ── Piper TTS Python API ───────────────────────────────────
 HAVE_PIPER_PYTHON = False
 try:
@@ -563,7 +636,13 @@ class Handler(SimpleHTTPRequestHandler):
             self._json_response({"error": str(e)[:300]})
 
     def _handle_tts(self, body):
-        """TTS con Piper Python API. ~45ms latencia."""
+        """TTS híbrido: Kokoro-82M (primario, streaming real) → Piper (fallback).
+        
+        Estrategia:
+        1. Kokoro: mejor calidad, streaming real (~2.5x EN, 1.0x ES)
+        2. Piper: ~45ms, siempre disponible como respaldo
+        3. subprocess Piper: último recurso
+        """
         global _piper_tts
         t0 = time.time()
         try:
@@ -574,31 +653,66 @@ class Handler(SimpleHTTPRequestHandler):
                 self._json_response({"error": "texto vacio"})
                 return
 
+            # Determinar idioma
+            if lang not in ('es', 'en'):
+                detected = detect_language(text)
+                lang = detected if detected in ('es', 'en') else 'es'
+
             wav_data = None
-            method = "python_api"
-            model_name = ""
-
-            if _piper_tts and _piper_tts.available:
-                if lang == 'en':
-                    model_name = "en_US-lessac-medium"
-                    wav_data = _piper_tts.synthesize(text, 'en')
-                elif lang == 'es':
-                    model_name = "es_ES-sharvard-medium"
-                    wav_data = _piper_tts.synthesize(text, 'es')
-                else:
-                    detected = detect_language(text)
-                    model_name = "es_ES-sharvard-medium" if detected == 'es' else "en_US-lessac-medium"
-                    wav_data = _piper_tts.synthesize(text, detected if detected in ('es', 'en') else 'es')
-
+            method = "kokoro"
+            
+            # ── 1. Kokoro-82M (primario) ──
+            if HAVE_KOKORO:
+                pipeline, voice = _get_kokoro_pipeline(lang)
+                if pipeline and voice:
+                    try:
+                        generator = pipeline(text, voice=voice, speed=1)
+                        audio_chunks = []
+                        for gs, ps, audio in generator:
+                            if audio is not None and len(audio) > 0:
+                                audio_chunks.append(np.asarray(audio, dtype=np.float32))
+                        
+                        if audio_chunks:
+                            full_audio = np.concatenate(audio_chunks)
+                            # Clamp y convertir a int16
+                            full_audio = np.clip(full_audio, -1.0, 1.0)
+                            full_int16 = (full_audio * 32767).astype(np.int16)
+                            
+                            # Build WAV
+                            data_size = len(full_int16) * 2
+                            buf = bytearray(44 + data_size)
+                            buf[0:4] = b'RIFF'
+                            struct.pack_into('<I', buf, 4, data_size + 36)
+                            buf[8:12] = b'WAVE'
+                            buf[12:16] = b'fmt '
+                            struct.pack_into('<I', buf, 16, 16)
+                            struct.pack_into('<H', buf, 20, 1)
+                            struct.pack_into('<H', buf, 22, 1)
+                            struct.pack_into('<I', buf, 24, 24000)
+                            struct.pack_into('<I', buf, 28, 48000)
+                            struct.pack_into('<H', buf, 32, 2)
+                            struct.pack_into('<H', buf, 34, 16)
+                            buf[36:40] = b'data'
+                            struct.pack_into('<I', buf, 40, data_size)
+                            buf[44:44+data_size] = full_int16.tobytes()
+                            wav_data = bytes(buf)
+                            method = "kokoro"
+                    except Exception as e:
+                        _safe_print(f"[B] [TTS] Kokoro falló: {e}")
+                        method = "kokoro_fallback"
+            
+            # ── 2. Piper Python API (fallback) ──
             if wav_data is None or len(wav_data) < 100:
-                # Fallback: piper.exe subprocess
+                if _piper_tts and _piper_tts.available:
+                    wav_data = _piper_tts.synthesize(text, lang)
+                    method = "piper_python_api"
+            
+            # ── 3. Piper subprocess (último recurso) ──
+            if wav_data is None or len(wav_data) < 100:
                 piper_exe = PROJECT_ROOT / "bin" / "piper" / "piper.exe"
                 es_model = PROJECT_ROOT / "models" / "es_ES-sharvard-medium.onnx"
                 en_model = PROJECT_ROOT / "models" / "en_US-lessac-medium.onnx"
-                if lang == 'en' and en_model.exists():
-                    mp = en_model
-                else:
-                    mp = es_model
+                mp = en_model if lang == 'en' and en_model.exists() else es_model
                 wav_data = _run_piper_file(text, mp, piper_exe)
                 method = "subprocess_fallback"
 
@@ -620,37 +734,64 @@ class Handler(SimpleHTTPRequestHandler):
             self._json_response({"error": str(e)[:200]})
 
     def _handle_tts_stream(self, body):
-        """Streaming TTS con Piper. Envía raw PCM por chunked transfer."""
+        """Streaming TTS híbrido: Kokoro-82M (primario) → Piper (fallback).
+        
+        Kokoro genera audio chunk por chunk (cada segmento de texto).
+        Cada chunk se envía al cliente en cuanto está listo.
+        Si Kokoro no está disponible, cae en Piper streaming.
+        """
         global _piper_tts
         t0 = time.time()
         headers_sent = False
+        engine_used = ""
         try:
             data = json.loads(body)
             text = data.get("text", "").strip()
             lang = data.get("lang", "auto")
-            if not text or not _piper_tts or not _piper_tts.available:
-                self._json_response({"error": "TTS no disponible"})
+            if not text:
+                self._json_response({"error": "texto vacio"})
                 return
             if lang not in ('es', 'en'):
                 detected = detect_language(text)
                 lang = detected if detected in ('es', 'en') else 'es'
 
             total_pcm = 0
-            for sr, pcm in _piper_tts.synthesize_stream(text, lang):
+            stream = None
+            
+            # ── 1. Kokoro streaming ──
+            if HAVE_KOKORO:
+                pipeline, voice = _get_kokoro_pipeline(lang)
+                if pipeline and voice:
+                    stream = _kokoro_synthesize_stream(text, lang)
+                    engine_used = "kokoro"
+            
+            # ── 2. Piper streaming (fallback si Kokoro no disponible) ──
+            if stream is None:
+                if _piper_tts and _piper_tts.available:
+                    stream = _piper_tts.synthesize_stream(text, lang)
+                    engine_used = "piper"
+                else:
+                    self._json_response({"error": "TTS no disponible"})
+                    return
+
+            for sr, pcm in stream:
                 if not headers_sent:
                     self.send_response(200)
                     self.send_header("Content-Type", "audio/L16")
                     self.send_header("X-Sample-Rate", str(sr))
                     self.send_header("X-Channels", "1")
                     self.send_header("X-Bits-Per-Sample", "16")
+                    self.send_header("X-TTS-Engine", engine_used)
                     self.send_header("Access-Control-Allow-Origin", "*")
                     self.end_headers()
                     headers_sent = True
                 self.wfile.write(pcm)
                 self.wfile.flush()
                 total_pcm += len(pcm)
-            _safe_print(f"[B] [TTS-stream] {total_pcm}B en {(time.time()-t0)*1000:.0f}ms")
+            dur = round((time.time() - t0) * 1000)
+            _safe_print(f"[B] [TTS-stream] {total_pcm}B en {dur}ms ({engine_used})")
         except Exception as e:
+            _safe_print(f"[B] [TTS-stream] Error: {e}")
             if not headers_sent:
                 self._json_response({"error": str(e)[:200]})
 
@@ -753,7 +894,8 @@ def main():
     _safe_print(f"  Stats API:    http://localhost:{PORT}/api/stats")
     _safe_print(f"  llama-server: {LLAMA_HOST}")
     _safe_print(f"  Cache:        LRU {_response_cache._maxsize} entradas")
-    _safe_print(f"  TTS:          Piper Python API (~45ms) + Streaming")
+    tts_str = "Kokoro-82M (principal) + Piper (fallback)" if HAVE_KOKORO else "Piper Python API (~45ms)"
+    _safe_print(f"  TTS:          {tts_str}")
     _safe_print(f"  ASR:          faster-whisper (base + small auto-switch)")
     _safe_print(f"{'='*50}\n")
 

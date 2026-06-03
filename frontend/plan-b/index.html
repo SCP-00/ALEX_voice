@@ -91,7 +91,7 @@ textarea:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--glow)}
 <div>VRAM: <span class="val" id="sVram">—</span></div>
 <div>RAM: <span class="val" id="sRam">—</span></div>
 <div class="cache-info">Cache: <span id="sCache">—</span></div>
-<div class="hint" id="sHint">⚡ 21 tok/s · Piper CPU</div>
+<div class="hint" id="sHint">⚡ Kokoro-82M + Piper · Caché LRU</div>
 </div>
 </div>
 
@@ -102,7 +102,7 @@ textarea:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--glow)}
 </div>
 
 <div class="messages" id="msgs">
-<div class="msg assistant">⚡ Plan B activo: Qwen3.5-2B (GPU) + Piper TTS (CPU) + Caché LRU<div class="ts">Alex Voice · Plan B</div></div>
+<div class="msg assistant">⚡ Plan B activo: Qwen3.5-2B (GPU) + Kokoro-82M + Piper (fallback)<div class="ts">Alex Voice · Plan B</div></div>
 </div>
 <div class="think-indicator" id="think"><span></span><span></span><span></span></div>
 
@@ -115,7 +115,7 @@ textarea:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--glow)}
 <div id="asrTranscript"></div>
 <div class="footer">
 <span>⚡ <span id="footerTok">—</span> tok/s</span>
-<span>🎙 Piper CPU</span>
+<span id="footerTtsLabel">🎙 Kokoro+Piper</span>
 <span>💾 <span id="footerVram">—</span> GB VRAM</span>
 <span id="footerStatus">✅ Listo</span>
 </div>
@@ -312,7 +312,8 @@ async function speakTTS(text) {
     }
     
     // Streaming: read raw PCM chunks
-    const sampleRate = parseInt(r.headers.get('X-Sample-Rate') || '22050');
+    const sampleRate = parseInt(r.headers.get('X-Sample-Rate') || '24000');
+    const engine = r.headers.get('X-TTS-Engine') || 'piper';
     const reader = r.body.getReader();
     
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -350,7 +351,8 @@ async function speakTTS(text) {
     source.onended = () => { setStatus('✅ Listo'); };
     
     ttsDiv.remove();
-    setStatus('🔊 Reproduciendo...');
+    const engineLabel = engine === 'kokoro' ? '🎵 Kokoro' : '🔊 Piper';
+    setStatus(engineLabel + ' Reproduciendo...');
     
   } catch (e) {
     ttsDiv.remove();
