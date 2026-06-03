@@ -653,6 +653,38 @@ class PiperTTS:
                 _safe_print(f"[PiperTTS] Error sintesis: {e}")
                 return None
     
+    def synthesize_stream(self, text, lang='es'):
+        """Generator: sintetiza texto y produce tuplas (sample_rate, pcm_bytes) en vivo.
+        
+        Cada llamada al generator produce un fragmento PCM int16 listo para enviar
+        por HTTP chunked transfer. El sample_rate se obtiene del primer chunk.
+        Thread-safe mediante self._lock.
+        
+        Uso:
+            for sr, pcm in tts.synthesize_stream("hola", "es"):
+                if sr: headers['X-Sample-Rate'] = sr
+                wfile.write(pcm)
+        """
+        voice = self.es_voice if lang == 'es' else self.en_voice if lang == 'en' else \
+                (self.es_voice or self.en_voice)
+        
+        if voice is None:
+            return
+        
+        sample_rate = 22050
+        with self._lock:
+            try:
+                for c in voice.synthesize(text):
+                    if sample_rate == 22050:
+                        sample_rate = getattr(c, 'sample_rate', 22050)
+                    
+                    if hasattr(c, 'audio_int16_array') and c.audio_int16_array is not None:
+                        yield (sample_rate, c.audio_int16_array.tobytes())
+                    elif hasattr(c, 'audio_int16_bytes') and c.audio_int16_bytes is not None:
+                        yield (sample_rate, c.audio_int16_bytes)
+            except Exception as e:
+                _safe_print(f"[PiperTTS] Error streaming: {e}")
+
     def stop(self):
         """Libera los modelos."""
         self.es_voice = None
@@ -1024,6 +1056,8 @@ class Handler(SimpleHTTPRequestHandler):
             self._handle_chat(body)
         elif self.path == "/api/tts-piper":
             self._handle_tts_piper(body)
+        elif self.path == "/api/tts-piper/stream":
+            self._handle_tts_piper_stream(body)
         else:
             self.send_response(404)
             self.end_headers()
@@ -1230,6 +1264,65 @@ class Handler(SimpleHTTPRequestHandler):
             self._json_response({"error": str(e)[:200]})
 
 
+
+    def _handle_tts_piper_stream(self, body):
+        """Endpoint streaming para TTS con Piper.
+        
+        Envía raw PCM int16 por HTTP chunked transfer encoding.
+        El frontend reproduce con Web Audio API a medida que llegan los chunks.
+        
+        Input: {"text": "...", "lang": "es"|en"}
+        Output: audio/L16 (raw PCM) con headers X-Sample-Rate, X-Channels, X-Bits-Per-Sample
+        """
+        global _piper_tts
+        t0 = time.time()
+        char_count = 0
+        lang = ""
+        headers_sent = False
+        try:
+            data = json.loads(body)
+            text = data.get("text", "").strip()
+            lang = data.get("lang", "auto")
+            char_count = len(text)
+            
+            if not text or not _piper_tts or not _piper_tts.available:
+                self._json_response({"error": "TTS no disponible"})
+                return
+            
+            # Determinar idioma
+            if lang not in ('es', 'en'):
+                detected = detect_language(text)
+                lang = detected if detected in ('es', 'en') else 'es'
+            
+            total_pcm = 0
+            
+            for sr, pcm_bytes in _piper_tts.synthesize_stream(text, lang):
+                if not headers_sent:
+                    # Primer chunk: enviar headers con metadata
+                    self.send_response(200)
+                    self.send_header("Content-Type", "audio/L16")
+                    self.send_header("X-Sample-Rate", str(sr))
+                    self.send_header("X-Channels", "1")
+                    self.send_header("X-Bits-Per-Sample", "16")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    headers_sent = True
+                
+                self.wfile.write(pcm_bytes)
+                self.wfile.flush()
+                total_pcm += len(pcm_bytes)
+            
+            duration_ms = round((time.time() - t0) * 1000)
+            add_log("tts", f"{total_pcm}B stream en {duration_ms}ms",
+                    voice_model="streaming", method="python_api_stream",
+                    duration_ms=duration_ms, char_count=char_count, language=lang)
+            _safe_print(f"[TTS-stream] {total_pcm}B en {duration_ms}ms")
+            
+        except Exception as e:
+            _safe_print(f"[TTS-stream] Error: {e}")
+            # Si no se enviaron headers todavía, responder JSON
+            if not headers_sent:
+                self._json_response({"error": str(e)[:200]})
 
     def _handle_log(self, body):
         try:
