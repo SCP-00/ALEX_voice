@@ -35,19 +35,54 @@ start_server.bat ─→ llama-server (Qwen, puerto 8081) + python server.py (Mon
 | Chat Proxy | ✅ `/api/chat` → llama-server `/chat/completions` |
 | TTS Endpoint | ✅ `/api/tts-piper` con auto-detect de idioma |
 | TTS GPU Endpoint | ✅ `/api/tts-gpu` (OuteTTS vía llama-tts.exe) |
-| ASR Endpoint | ✅ `/api/asr` (faster-whisper tiny, CPU ~300ms) |
+| ASR Endpoint | ✅ `/api/asr` (faster-whisper auto-switch: base ES/EN, small JA) |
 | Debug UI | ✅ `/debug` con 4 tabs (Timeline/Analytics/Hardware/TTS) |
 | Logging | ✅ Sistema enriquecido con export JSON y estadísticas |
 | Detección idioma | ✅ ES/EN/JA con split_by_language |
 
-### ✅ ASR (Voice Input) — COMPLETADO
+### ✅ ASR (Voice Input) — COMPLETADO CON AUTO-SWITCH
 | Componente | Estado |
 |:-----------|:------:|
-| faster-whisper | ✅ Instalado y cargado al iniciar server.py |
-| Transcribir audio WAV | ✅ ~200-500ms por transcripción (tiny, CPU) |
+| faster-whisper | ✅ Auto-switch: base cargado al iniciar (ES/EN), small lazy bajo demanda (JA) |
+| Transcribir audio WAV | ✅ ~36ms (base, CPU) / ~82ms (small, CPU, JA) |
+| Auto-switch por idioma | ✅ `lang="ja"` → small directo. `lang="auto"` → base, si detecta JA re-ejecuta con small |
 | Micrófono en frontend (Chrome ASR) | ✅ Funcional con toggle Escucha Activa |
 | Micrófono en frontend (Whisper ASR) | ✅ Envía WAV a /api/asr |
 | Fallback a whisper-cli.exe | ✅ Mantenido para compatibilidad |
+| EchoGuard (anti-loop) | ✅ Bloquea eco TTS→micrófono con cooldown 1.8s |
+
+### ASR — Benchmark: tiny vs base vs small
+Benchmark ejecutado con audios TTS (Piper) de ~2s cada uno. CPU: Intel i5-13420H.
+
+**Español**
+| Modelo | Carga | Transcripción | RAM | CER | Veredicto |
+|:-------|:-----:|:-------------:|:---:|:---:|:---------:|
+| tiny | 684ms | 190ms | 75 MB | 0.045 | ⚠️ Lento en trans |
+| **base** ✅ | **490ms** | **14ms** | **150 MB** | 0.060 | ✅ Rápido |
+| small | 1460ms | 13ms | 500 MB | 0.075 | ❌ Pesado |
+
+**English**
+| Modelo | Carga | Transcripción | RAM | CER | Veredicto |
+|:-------|:-----:|:-------------:|:---:|:---:|:---------:|
+| tiny | 292ms | 15ms | 75 MB | 0.031 | ✅ Bueno |
+| **base** ✅ | 404ms | **13ms** | **150 MB** | **0.031** | ✅ Ideal |
+| small | 970ms | 13ms | 500 MB | **0.031** | ⚠️ Pesado |
+
+**Japanese**
+| Modelo | Carga | Transcripción | RAM | CER vs tiny | Veredicto |
+|:-------|:-----:|:-------------:|:---:|:-----------:|:---------:|
+| tiny | 301ms | 93ms | 75 MB | — | ❌ Pobre en JA |
+| **base** ✅ | 392ms | **80ms** | **150 MB** | **3.7x mejor** | ✅ Bueno |
+| small ⭐ | 991ms | 82ms | 500 MB | **13x mejor** | ✅ Excelente |
+
+> ⚠️ Nota: Los audios de prueba JA se generaron con modelo ES (no hay modelo JA para Piper).
+> Los CER son relativos entre modelos, no absolutos.
+
+**Conclusión del benchmark:**
+- **tiny**: 75 MB RAM, buena precisión EN, decente ES, pobre JA
+- **base** 🏆: 150 MB RAM, excelente EN/ES, 3.7x mejor JA que tiny
+- **small**: 283 MB RAM (medido), 13x mejor JA, carga ~1.34s
+- **Decisión final (auto-switch)**: **base** para ES/EN, **small** lazy solo cuando se detecta JA. Mejor de ambos mundos.
 
 ## 📊 Benchmarks Reales (RTX 3050 6GB, 5.28 GB VRAM usable)
 

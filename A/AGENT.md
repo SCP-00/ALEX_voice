@@ -38,5 +38,7 @@ Ejecutar el asistente local con LLM en GPU y TTS optimizado.
 - Total: ~3.5 GB VRAM + ~250 MB RAM de ~16.5 GB
 - Margen: ~1.8 GB VRAM, ~5.5 GB RAM
 
-## Siguiente Paso
-Optimizar ASR con modelo larger si la latencia lo permite, o añadir VAD (Voice Activity Detection) más agresivo.
+## Estado Actual
+- **ASR auto-switch**: base para ES/EN (~36ms, 150 MB), small lazy para JA (~82ms, +283 MB)
+- **EchoGuard**: protección anti-loop TTS→micrófono implementada
+- Todos los objetivos de Fase 1-3 completados y en producción.

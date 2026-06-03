@@ -14,7 +14,7 @@ Ejecutar LLM + TTS compartiendo GPU sin swapping. Plan activo y en producción.
 | **Chat Proxy** | ✅ | /api/chat → llama-server /chat/completions |
 | **TTS Piper** | ✅ | Python API (~45ms), modelos ES/EN en memoria |
 | **TTS GPU** | ⚠️ | OuteTTS vía llama-tts.exe (~13s, experimental) |
-| **ASR** | ✅ | faster-whisper tiny, CPU, ~200-500ms |
+| **ASR** | ✅ | faster-whisper auto-switch: base (ES/EN) + small lazy (JA), CPU ~36-82ms |
 | **Debug UI** | ✅ | /debug con 4 tabs (Timeline/Analytics/Hardware/TTS) |
 | **Logging** | ✅ | logger.py con stats y export JSON |
 | **Idiomas** | ✅ | ES/EN detectados, JA por caracteres Unicode |
@@ -48,16 +48,16 @@ Ejecutar LLM + TTS compartiendo GPU sin swapping. Plan activo y en producción.
 - ✅ Endpoint /api/tts-piper
 
 ### Phase 3 ✅ — Voice Input Pipeline (COMPLETADO)
-- [x] faster-whisper instalado y cargado al iniciar server.py
-- [x] ASR endpoint /api/asr con faster-whisper como primario
+- [x] faster-whisper instalado con auto-switch base/small
+- [x] ASR endpoint /api/asr con auto-switch por idioma
 - [x] Micrófono integrado en frontend (Chrome ASR + Whisper ASR)
+- [x] EchoGuard anti-loop TTS→micrófono
 - [x] Pipeline completo: Audio → ASR → LLM → TTS
 
 ### Phase 4 📋 — Mejoras Futuras
 - [ ] Caché de respuestas
 - [ ] Streaming TTS
 - [ ] Voice cloning (OuteTTS speaker file)
-- [ ] VAD (Voice Activity Detection) avanzado
 
 ## Stack Tecnológico Final
 - **LLM:** Qwen3.5-2B-Q8 (GPU, llama-server)
