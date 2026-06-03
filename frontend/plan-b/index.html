@@ -1,35 +1,560 @@
 <!DOCTYPE html>
 <html lang="es">
-<head><meta charset="UTF-8"><meta name="viewport"content="width=device-width,initial-scale=1.0"><title>Plan B — Alex Voice (GPU+CPU)</title>
-<link rel="preconnect"href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"rel="stylesheet">
-<style>:root{--bg:#0a0e17;--surface:#111827;--surface2:#1c2538;--border:#2a3650;--text:#e0e8f5;--textDim:#8899bb;--accent:#3b82f6;--accent2:#1d4ed8;--glow:rgba(59,130,246,.3)}*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;overflow:hidden}.sidebar{width:240px;background:var(--surface);border-right:1px solid var(--border);padding:24px 14px;display:flex;flex-direction:column;flex-shrink:0}.logo{font-size:20px;font-weight:700;color:var(--accent)}.plan-badge{font-size:10px;letter-spacing:1.5px;color:var(--accent);margin:4px 0 24px;padding:3px 8px;border:1px solid var(--accent);display:inline-block}.mode-group{display:flex;flex-direction:column;gap:4px;flex:1}.mode-btn{padding:8px 12px;border-radius:6px;border:none;cursor:pointer;background:transparent;color:var(--textDim);font-family:inherit;font-size:13px;font-weight:500;transition:all .2s;text-align:left}.mode-btn:hover{color:var(--text);background:var(--surface2)}.mode-btn.active{color:var(--text);background:var(--surface2);border-left:2px solid var(--accent)}.main{flex:1;display:flex;flex-direction:column}.header{padding:14px 24px;border-bottom:1px solid var(--border);background:var(--surface);display:flex;align-items:center;justify-content:space-between}.header h2{font-size:15px;font-weight:600}.messages{flex:1;overflow-y:auto;padding:16px 24px;display:flex;flex-direction:column;gap:10px;font-size:13px}.msg{max-width:78%;padding:10px 14px;border-radius:10px;line-height:1.5;animation:fadeIn .3s}@keyframes fadeIn{from{opacity:0}}.msg.user{align-self:flex-end;background:var(--accent);color:#fff}.msg.assistant{align-self:flex-start;background:var(--surface2);border:1px solid var(--border)}.msg .ts{font-size:9px;color:var(--textDim);margin-top:4px;opacity:.4}.think-indicator{align-self:flex-start;display:none;gap:4px;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:10px}.think-indicator.show{display:flex}.think-indicator span{width:5px;height:5px;border-radius:50%;background:var(--accent);animation:bounce 1.4s infinite}.think-indicator span:nth-child(2){animation-delay:.2s}.think-indicator span:nth-child(3){animation-delay:.4s}@keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-5px)}}.input-area{padding:14px 24px;border-top:1px solid var(--border);background:var(--surface)}.input-row{display:flex;gap:8px}textarea{flex:1;padding:10px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:13px;resize:none;outline:none;min-height:44px}textarea:focus{border-color:var(--accent)}.send-btn{width:44px;height:44px;border-radius:8px;border:none;cursor:pointer;background:var(--accent);color:#fff;font-size:16px}.send-btn:hover{background:var(--accent2)}.send-btn:disabled{opacity:.3;cursor:not-allowed}.footer{font-size:10px;color:var(--textDim);margin-top:8px;display:flex;gap:16px}
-</style></head>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Plan B — Alex Voice (GPU+CPU)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0a0e17;--surface:#111827;--surface2:#1c2538;--border:#2a3650;--text:#e0e8f5;--textDim:#8899bb;--accent:#3b82f6;--accent2:#2563eb;--success:#22c55e;--warn:#f59e0b;--glow:rgba(59,130,246,.25)}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;overflow:hidden}
+
+/* ── Sidebar ── */
+.sidebar{width:220px;background:var(--surface);border-right:1px solid var(--border);padding:20px 12px;display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto}
+.logo{font-size:18px;font-weight:700;color:var(--accent);display:flex;align-items:center;gap:8px}
+.plan-badge{font-size:10px;letter-spacing:1.5px;color:var(--accent);margin:2px 0 20px;padding:2px 8px;border:1px solid var(--accent);display:inline-block;border-radius:3px}
+.mode-group{display:flex;flex-direction:column;gap:4px}
+.mode-btn{padding:7px 10px;border-radius:6px;border:none;cursor:pointer;background:transparent;color:var(--textDim);font-family:inherit;font-size:12px;font-weight:500;transition:all .2s;text-align:left}
+.mode-btn:hover{color:var(--text);background:var(--surface2)}
+.mode-btn.active{color:var(--text);background:var(--surface2);border-left:2px solid var(--accent)}
+.stats-box{margin-top:auto;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:10px;color:var(--textDim);line-height:1.6}
+.stats-box .val{color:var(--text);font-weight:500}
+.stats-box .hint{color:var(--accent);margin-top:3px;font-size:9px}
+.cache-info{font-size:9px;color:var(--textDim);margin-top:4px;padding-top:4px;border-top:1px solid var(--border)}
+
+/* ── Main ── */
+.main{flex:1;display:flex;flex-direction:min-width:0}
+.header{padding:12px 20px;border-bottom:1px solid var(--border);background:var(--surface);display:flex;align-items:center;justify-content:space-between}
+.header h2{font-size:14px;font-weight:600}
+.header .badge{font-size:10px;color:var(--textDim);background:var(--surface2);padding:2px 8px;border-radius:10px}
+.messages{flex:1;overflow-y:auto;padding:12px 20px;display:flex;flex-direction:column;gap:8px;font-size:13px}
+.msg{max-width:80%;padding:10px 14px;border-radius:10px;line-height:1.5;animation:fadeIn .3s}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}}
+.msg.user{align-self:flex-end;background:var(--accent);color:#fff}
+.msg.assistant{align-self:flex-start;background:var(--surface2);border:1px solid var(--border)}
+.msg .ts{font-size:9px;color:var(--textDim);margin-top:4px;opacity:.4}
+.msg .toolbar{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+.msg .toolbar button{background:var(--surface);border:1px solid var(--border);color:var(--textDim);padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;transition:all .2s}
+.msg .toolbar button:hover{color:var(--text);border-color:var(--accent);background:var(--surface2)}
+.msg .cached-badge{font-size:8px;color:var(--success);background:rgba(34,197,94,.1);padding:1px 5px;border-radius:3px;display:inline-block;margin-top:3px}
+.think-indicator{align-self:flex-start;display:none;gap:4px;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:10px}
+.think-indicator.show{display:flex}
+.think-indicator span{width:5px;height:5px;border-radius:50%;background:var(--accent);animation:bounce 1.4s infinite}
+.think-indicator span:nth-child(2){animation-delay:.2s}
+.think-indicator span:nth-child(3){animation-delay:.4s}
+@keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-5px)}}
+
+/* ── Input ── */
+.input-area{padding:12px 20px;border-top:1px solid var(--border);background:var(--surface)}
+.input-row{display:flex;gap:8px}
+textarea{flex:1;padding:10px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:13px;resize:none;outline:none;min-height:42px}
+textarea:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--glow)}
+.action-btn{width:38px;height:42px;border-radius:8px;border:none;cursor:pointer;background:var(--surface2);color:var(--textDim);font-size:16px;transition:all .2s;display:flex;align-items:center;justify-content:center}
+.action-btn:hover{color:var(--text);background:var(--accent)}
+.action-btn.active{background:var(--accent);color:#fff;box-shadow:0 0 8px var(--glow)}
+.action-btn.recording{background:#dc2626;color:#fff;box-shadow:0 0 12px rgba(220,38,38,.4);animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 8px rgba(220,38,38,.4)}50%{box-shadow:0 0 20px rgba(220,38,38,.6)}}
+.action-btn:disabled{opacity:.3;cursor:not-allowed}
+.send-btn{width:42px;height:42px;border-radius:8px;border:none;cursor:pointer;background:var(--accent);color:#fff;font-size:16px;transition:all .2s}
+.send-btn:hover{background:var(--accent2)}
+.send-btn:disabled{opacity:.3;cursor:not-allowed}
+.footer{font-size:10px;color:var(--textDim);margin-top:6px;display:flex;gap:16px}
+
+/* ── Voice ── */
+#asrTranscript{font-size:10px;color:var(--textDim);margin-top:4px;min-height:16px}
+.asr-tooltip{font-size:9px;color:var(--warn);margin-top:2px}
+.tts-loading{font-size:10px;color:var(--accent);margin-top:2px;animation:blink 1s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--textDim)}
+</style>
+</head>
 <body>
+
 <div class="sidebar">
-<div class="logo">AlexVoice</div>
-<div class="plan-badge">Plan B · GPU+CPU</div>
-<div class="mode-group"id="modeGroup">
-<button class="mode-btn active"data-mode="teacher"onclick="setMode('teacher')"><strong>🎓 Teacher</strong><br><span style="font-size:10px;color:var(--textDim)">Explicaciones</span></button>
-<button class="mode-btn"data-mode="conversation"onclick="setMode('conversation')"><strong>💬 Conversación</strong><br><span style="font-size:10px;color:var(--textDim)">Charla natural</span></button>
-<button class="mode-btn"data-mode="translator"onclick="setMode('translator')"><strong>🌍 Traductor</strong><br><span style="font-size:10px;color:var(--textDim)">ES/EN/JA</span></button>
+<div class="logo">⚡ AlexVoice</div>
+<div class="plan-badge">PLAN B · GPU+CPU</div>
+<div class="mode-group" id="modeGroup">
+<button class="mode-btn active" data-mode="teacher" onclick="setMode('teacher')"><strong>🎓 Teacher</strong><br><span style="font-size:10px;color:var(--textDim)">Explicaciones claras</span></button>
+<button class="mode-btn" data-mode="conversation" onclick="setMode('conversation')"><strong>💬 Conversación</strong><br><span style="font-size:10px;color:var(--textDim)">Charla natural</span></button>
+<button class="mode-btn" data-mode="translator" onclick="setMode('translator')"><strong>🌍 Traductor</strong><br><span style="font-size:10px;color:var(--textDim)">ES/EN/JA</span></button>
 </div>
-<div style="margin-top:auto;font-size:10px;color:var(--textDim);padding:8px;border:1px solid var(--border);border-radius:6px"><div>LLM: Qwen3.5-2B (GPU)</div><div>TTS: Piper (CPU)</div><div style="color:var(--accent);margin-top:4px">✅ VRAM: ~3.0 GB</div></div>
+<div class="stats-box" id="statsBox">
+<div>LLM: <span class="val" id="sLlama">—</span></div>
+<div>GPU: <span class="val" id="sGpu">—</span></div>
+<div>VRAM: <span class="val" id="sVram">—</span></div>
+<div>RAM: <span class="val" id="sRam">—</span></div>
+<div class="cache-info">Cache: <span id="sCache">—</span></div>
+<div class="hint" id="sHint">⚡ 21 tok/s · Piper CPU</div>
 </div>
+</div>
+
 <div class="main">
-<div class="header"><h2 id="modeTitle">💬 Plan B — LLM en GPU · TTS en CPU</h2><span style="font-size:11px;color:var(--textDim)"id="modeBadge">Teacher Mode</span></div>
-<div class="messages"id="msgs"><div class="msg assistant">Plan B: Qwen3.5-2B en GPU + Piper TTS en CPU.<div class="ts">Alex Voice · Plan B</div></div></div>
-<div class="think-indicator"id="think"><span></span><span></span><span></span></div>
+<div class="header">
+<h2 id="modeTitle">💬 Plan B — LLM GPU · TTS CPU</h2>
+<span class="badge" id="modeBadge">Teacher Mode</span>
+</div>
+
+<div class="messages" id="msgs">
+<div class="msg assistant">⚡ Plan B activo: Qwen3.5-2B (GPU) + Piper TTS (CPU) + Caché LRU<div class="ts">Alex Voice · Plan B</div></div>
+</div>
+<div class="think-indicator" id="think"><span></span><span></span><span></span></div>
+
 <div class="input-area">
-<div class="input-row"><textarea id="input"placeholder="Escribe..."rows="1"onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea><button class="send-btn"id="sendBtn"onclick="send()">➤</button></div>
-<div class="footer"><span>⚡ 21 tok/s</span><span>🎙 Piper CPU</span><span>💾 3.0/5.3 GB</span></div>
+<div class="input-row">
+<button class="action-btn" id="micBtn" onclick="toggleMic()" title="Grabar voz (ASR)">🎤</button>
+<textarea id="input" placeholder="Escribe un mensaje..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
+<button class="send-btn" id="sendBtn" onclick="send()">➤</button>
+</div>
+<div id="asrTranscript"></div>
+<div class="footer">
+<span>⚡ <span id="footerTok">—</span> tok/s</span>
+<span>🎙 Piper CPU</span>
+<span>💾 <span id="footerVram">—</span> GB VRAM</span>
+<span id="footerStatus">✅ Listo</span>
 </div>
 </div>
+</div>
+
 <script>
-const MODES={teacher:{name:'🎓 Teacher',badge:'Teacher Mode',sys:'Eres un tutor experto. Explica con claridad. Responde en el idioma del usuario.'},conversation:{name:'💬 Conversación',badge:'Conversation Mode',sys:'Eres un asistente amigable. Respondes en el mismo idioma.'},translator:{name:'🌍 Traductor',badge:'Translator Mode',sys:'Eres un traductor ES/EN/JA. Traduce e incluye romaji para japones.'}};
-let currentMode='teacher';
-function setMode(m){currentMode=m;const c=MODES[m];document.getElementById('modeTitle').textContent='💬 Plan B — '+c.name;document.getElementById('modeBadge').textContent=c.badge;document.querySelectorAll('.mode-btn').forEach(b=>b.classList.remove('active'));document.querySelector(`[data-mode="${m}"]`).classList.add('active')}
-function addMsg(role,text){const d=document.createElement('div');d.className='msg '+role;d.textContent=typeof text==='string'?text:JSON.stringify(text);const t=document.createElement('div');t.className='ts';t.textContent=new Date().toLocaleTimeString();d.appendChild(t);document.getElementById('msgs').appendChild(d);d.scrollIntoView({behavior:'smooth'})}
-async function send(){const i=document.getElementById('input');const t=i.value.trim();if(!t)return;addMsg('user',t);i.value='';document.getElementById('think').classList.add('show');document.getElementById('sendBtn').disabled=true;try{const r=await fetch('http://localhost:8081/completion',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:'<|im_start|>system\n'+MODES[currentMode].sys+'<|im_end|>\n<|im_start|>user\n'+t+'<|im_end|>\n<|im_start|>assistant\n',n_predict:256,temperature:currentMode==='teacher'?0.5:currentMode==='translator'?0.3:0.7,stop:['<|im_end|>']})});const d=await r.json();addMsg('assistant',d.content||'[sin respuesta]')}catch(e){addMsg('assistant','⚠️ Error: '+e.message)}document.getElementById('think').classList.remove('show');document.getElementById('sendBtn').disabled=false}
+// ── Config ──
+const API_BASE = window.location.origin;
+const LLAMA_HOST = 'http://localhost:8081';
+
+const MODES = {
+  teacher: {
+    name: '🎓 Teacher',
+    badge: 'Teacher Mode',
+    sys: 'Eres un tutor experto. Explica conceptos con claridad y ejemplos. Responde en el mismo idioma del usuario.',
+    temp: 0.5,
+  },
+  conversation: {
+    name: '💬 Conversación',
+    badge: 'Conversation Mode',
+    sys: 'Eres un asistente amigable y conversacional. Respondes en el mismo idioma del usuario. Mantén respuestas naturales.',
+    temp: 0.7,
+  },
+  translator: {
+    name: '🌍 Traductor',
+    badge: 'Translator Mode',
+    sys: 'Eres un traductor profesional ES/EN/JA. Traduce el texto al idioma solicitado. Para japonés incluye romaji.',
+    temp: 0.3,
+  },
+};
+
+let currentMode = 'teacher';
+let messageHistory = [];
+let lastMsgId = 0;
+let isProcessing = false;
+let audioCtx = null;
+let mediaRecorder = null;
+let audioChunks = [];
+let isRecording = false;
+let pollTimer = null;
+
+// ── UI ──
+function setMode(m) {
+  currentMode = m;
+  const c = MODES[m];
+  document.getElementById('modeTitle').textContent = '💬 Plan B — ' + c.name;
+  document.getElementById('modeBadge').textContent = c.badge;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector(`[data-mode="${m}"]`).classList.add('active');
+}
+
+function addMsg(role, text, extra) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + role;
+  
+  // Content
+  const content = document.createElement('span');
+  content.textContent = typeof text === 'string' ? text : JSON.stringify(text);
+  d.appendChild(content);
+  
+  // Cached badge
+  if (extra && extra.cached) {
+    const cb = document.createElement('span');
+    cb.className = 'cached-badge';
+    cb.textContent = '⚡ CACHÉ';
+    d.appendChild(cb);
+  }
+  
+  // Timestamp
+  const t = document.createElement('div');
+  t.className = 'ts';
+  t.textContent = new Date().toLocaleTimeString();
+  d.appendChild(t);
+  
+  // Toolbar (assistant only)
+  if (role === 'assistant') {
+    const tb = document.createElement('div');
+    tb.className = 'toolbar';
+    
+    // Speak button
+    const spk = document.createElement('button');
+    spk.textContent = '🔊 Hablar';
+    spk.onclick = () => speakTTS(text);
+    tb.appendChild(spk);
+    
+    // Copy button
+    const cpy = document.createElement('button');
+    cpy.textContent = '📋 Copiar';
+    cpy.onclick = () => { navigator.clipboard.writeText(text); cpy.textContent = '✅ Copiado'; setTimeout(() => cpy.textContent = '📋 Copiar', 2000); };
+    tb.appendChild(cpy);
+    
+    d.appendChild(tb);
+  }
+  
+  document.getElementById('msgs').appendChild(d);
+  d.scrollIntoView({ behavior: 'smooth' });
+}
+
+function setThinking(on) {
+  document.getElementById('think').classList.toggle('show', on);
+  document.getElementById('sendBtn').disabled = on;
+  document.getElementById('micBtn').disabled = on;
+}
+
+function setStatus(msg) {
+  document.getElementById('footerStatus').textContent = msg;
+}
+
+// ── Chat ──
+async function send() {
+  const input = document.getElementById('input');
+  const text = input.value.trim();
+  if (!text || isProcessing) return;
+  
+  addMsg('user', text);
+  input.value = '';
+  isProcessing = true;
+  setThinking(true);
+  setStatus('🧠 Pensando...');
+  
+  try {
+    // Build messages array
+    const sysMsg = { role: 'system', content: MODES[currentMode].sys };
+    const userMsg = { role: 'user', content: text };
+    const msgs = [sysMsg, ...messageHistory.slice(-6), userMsg];
+    
+    const r = await fetch(API_BASE + '/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: msgs,
+        n_predict: 512,
+        temperature: MODES[currentMode].temp,
+        stream: false,
+      }),
+    });
+    const data = await r.json();
+    
+    const content = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || data.content || '[sin respuesta]';
+    const isCached = data.cached === true;
+    
+    addMsg('assistant', content, { cached: isCached });
+    messageHistory.push(userMsg, { role: 'assistant', content });
+    if (messageHistory.length > 20) messageHistory = messageHistory.slice(-20);
+    
+    setStatus(isCached ? '⚡ Respuesta desde caché' : '✅ Listo');
+    
+    // Auto-speak short responses
+    if (content.length < 500 && !isRecording) {
+      speakTTS(content);
+    }
+  } catch (e) {
+    addMsg('assistant', '⚠️ Error: ' + e.message);
+    setStatus('❌ Error');
+  }
+  
+  isProcessing = false;
+  setThinking(false);
+}
+
+// ── TTS ──
+let audioQueue = [];
+let isPlaying = false;
+let streamSource = null;
+
+async function speakTTS(text) {
+  if (!text || text.length > 2000) return;
+  
+  const ttsDiv = document.createElement('div');
+  ttsDiv.className = 'tts-loading';
+  ttsDiv.textContent = '🔊 Generando audio...';
+  document.getElementById('footerStatus').parentNode.insertBefore(ttsDiv, document.getElementById('footerStatus'));
+  
+  try {
+    const r = await fetch(API_BASE + '/api/tts/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, lang: 'auto' }),
+    });
+    
+    if (!r.ok) {
+      // Fallback to non-streaming TTS
+      const r2 = await fetch(API_BASE + '/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, lang: 'auto' }),
+      });
+      if (!r2.ok) throw new Error('TTS falló');
+      const blob = await r2.blob();
+      await playAudioBlob(blob);
+      ttsDiv.remove();
+      return;
+    }
+    
+    // Streaming: read raw PCM chunks
+    const sampleRate = parseInt(r.headers.get('X-Sample-Rate') || '22050');
+    const reader = r.body.getReader();
+    
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    
+    const audioBuffer = audioCtx.createBuffer(1, 44100 * 60, sampleRate); // pre-allocate 60s
+    let offset = 0;
+    let totalSamples = 0;
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      const int16 = new Int16Array(value.buffer);
+      const float32 = new Float32Array(int16.length);
+      for (let i = 0; i < int16.length; i++) {
+        float32[i] = int16[i] / 32768;
+      }
+      
+      audioBuffer.getChannelData(0).set(float32, offset);
+      offset += float32.length;
+      totalSamples += float32.length;
+    }
+    
+    if (totalSamples === 0) throw new Error('Sin datos de audio');
+    
+    // Trim buffer to actual size
+    const finalBuffer = audioCtx.createBuffer(1, totalSamples, sampleRate);
+    finalBuffer.getChannelData(0).set(audioBuffer.getChannelData(0).subarray(0, totalSamples));
+    
+    const source = audioCtx.createBufferSource();
+    source.buffer = finalBuffer;
+    source.connect(audioCtx.destination);
+    source.start(0);
+    
+    source.onended = () => { setStatus('✅ Listo'); };
+    
+    ttsDiv.remove();
+    setStatus('🔊 Reproduciendo...');
+    
+  } catch (e) {
+    ttsDiv.remove();
+    console.warn('TTS error:', e);
+    setStatus('❌ TTS error');
+  }
+}
+
+async function playAudioBlob(blob) {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const buf = await audioCtx.decodeAudioData(await blob.arrayBuffer());
+  const s = audioCtx.createBufferSource();
+  s.buffer = buf;
+  s.connect(audioCtx.destination);
+  s.start(0);
+  setStatus('🔊 Reproduciendo...');
+  s.onended = () => setStatus('✅ Listo');
+}
+
+// ── ASR (Mic) ──
+async function toggleMic() {
+  if (isRecording) {
+    stopRecording();
+    return;
+  }
+  
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 } });
+    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+    audioChunks = [];
+    
+    mediaRecorder.ondataavailable = e => {
+      if (e.data.size > 0) audioChunks.push(e.data);
+    };
+    
+    mediaRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      if (audioChunks.length === 0) return;
+      
+      setStatus('🔄 Transcribiendo...');
+      document.getElementById('asrTranscript').textContent = '🔄 Procesando audio...';
+      
+      // Convert to WAV for faster-whisper
+      const blob = new Blob(audioChunks, { type: 'audio/webm' });
+      const wavBlob = await convertToWav(blob);
+      const base64 = await blobToBase64(wavBlob);
+      
+      try {
+        const r = await fetch(API_BASE + '/api/asr', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ audio: base64, lang: 'auto' }),
+        });
+        const data = await r.json();
+        
+        if (data.error) {
+          document.getElementById('asrTranscript').textContent = '❌ ' + data.error;
+          setStatus('❌ ASR error');
+          return;
+        }
+        
+        const text = data.text || '';
+        if (text.length < 2) {
+          document.getElementById('asrTranscript').textContent = '🔇 Sin voz detectada';
+          setStatus('✅ Listo');
+          return;
+        }
+        
+        document.getElementById('asrTranscript').textContent = '🗣️ ' + text;
+        document.getElementById('input').value = text;
+        
+        // Auto-send after short delay
+        setTimeout(() => send(), 500);
+        
+      } catch (e) {
+        document.getElementById('asrTranscript').textContent = '❌ Error: ' + e.message;
+        setStatus('❌ ASR error');
+      }
+    };
+    
+    mediaRecorder.start();
+    isRecording = true;
+    document.getElementById('micBtn').classList.add('recording');
+    document.getElementById('micBtn').title = 'Detener grabación';
+    setStatus('🎤 Grabando...');
+    document.getElementById('asrTranscript').textContent = '🎤 Grabando... Di algo';
+    
+    // Auto-stop after 8 seconds
+    setTimeout(() => {
+      if (isRecording) stopRecording();
+    }, 8000);
+    
+  } catch (e) {
+    document.getElementById('asrTranscript').textContent = '❌ Error mic: ' + e.message;
+    setStatus('❌ Error micrófono');
+  }
+}
+
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+  isRecording = false;
+  document.getElementById('micBtn').classList.remove('recording');
+  document.getElementById('micBtn').title = 'Grabar voz';
+}
+
+async function convertToWav(webmBlob) {
+  // Decode with AudioContext, re-encode as WAV
+  const ac = new (window.AudioContext || window.webkitAudioContext)();
+  const buf = await ac.decodeAudioData(await webmBlob.arrayBuffer());
+  const pcm = buf.getChannelData(0);
+  const sr = buf.sampleRate;
+  
+  // Downsample to 16kHz
+  const targetSr = 16000;
+  const ratio = sr / targetSr;
+  const newLen = Math.floor(pcm.length / ratio);
+  const resampled = new Float32Array(newLen);
+  for (let i = 0; i < newLen; i++) {
+    resampled[i] = pcm[Math.floor(i * ratio)];
+  }
+  
+  // Convert to 16-bit PCM
+  const int16 = new Int16Array(resampled.length);
+  for (let i = 0; i < resampled.length; i++) {
+    const s = Math.max(-1, Math.min(1, resampled[i]));
+    int16[i] = s < 0 ? s * 32768 : s * 32767;
+  }
+  
+  // Build WAV
+  const numSamples = int16.length;
+  const dataSize = numSamples * 2;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+  
+  const writeStr = (offset, str) => {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  };
+  
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, targetSr, true);
+  view.setUint32(28, targetSr * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, 'data');
+  view.setUint32(40, dataSize, true);
+  
+  for (let i = 0; i < numSamples; i++) {
+    view.setInt16(44 + i * 2, int16[i], true);
+  }
+  
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64 = reader.result.split(',')[1];
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+// ── Stats Polling ──
+async function pollStats() {
+  try {
+    const r = await fetch(API_BASE + '/api/stats');
+    const s = await r.json();
+    
+    document.getElementById('sLlama').textContent = s.llama_connected ? '✅ Conectado' : '❌ Desconectado';
+    document.getElementById('sGpu').textContent = s.gpu_percent ? s.gpu_percent + '%' : '—';
+    document.getElementById('sVram').textContent = s.vram_used_mb ? Math.round(s.vram_used_mb / 1024 * 10) / 10 + '/' + Math.round(s.vram_total_mb / 1024 * 10) / 10 + ' GB' : '—';
+    document.getElementById('sRam').textContent = s.ram_percent ? s.ram_percent + '%' : '—';
+    document.getElementById('footerTok').textContent = s.tokens_per_sec || '—';
+    document.getElementById('footerVram').textContent = s.vram_used_mb ? (s.vram_used_mb / 1024).toFixed(1) : '—';
+    
+    // Cache stats
+    try {
+      const cr = await fetch(API_BASE + '/api/cache/stats');
+      const cs = await cr.json();
+      document.getElementById('sCache').textContent = cs.hit_rate + '% (' + cs.hits + ' hits, ' + cs.size + ' items)';
+    } catch (e) {
+      document.getElementById('sCache').textContent = '—';
+    }
+    
+  } catch (e) {
+    document.getElementById('sLlama').textContent = '❌ Sin conexión';
+  }
+}
+
+// ── Init ──
+setMode('teacher');
+pollStats();
+pollTimer = setInterval(pollStats, 3000);
 </script>
 </body>
 </html>

@@ -1,0 +1,791 @@
+#!/usr/bin/env python3
+"""
+Alex Voice — Plan B: LLM en GPU, TTS en CPU
+Servidor independiente. Cada plan es autónomo.
+Corre en puerto 3001 para no interferir con Plan A (3000).
+"""
+
+import json
+import os
+import re
+import base64
+import struct
+import time
+import threading
+import subprocess
+import urllib.request
+import urllib.error
+import numpy as np
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+from pathlib import Path
+from urllib.parse import urlparse
+from collections import OrderedDict
+
+# ── LRU Cache ──────────────────────────────────────────────
+class ResponseCache:
+    """LRU cache thread-safe para respuestas del LLM."""
+    def __init__(self, maxsize=50):
+        self._cache = OrderedDict()
+        self._maxsize = maxsize
+        self._lock = threading.Lock()
+        self._hits = 0
+        self._misses = 0
+
+    def _make_key(self, messages):
+        key_parts = []
+        for msg in messages[-4:]:
+            role = msg.get('role', '')
+            content = msg.get('content', '')[:200]
+            key_parts.append(f"{role}:{content}")
+        return hash('|'.join(key_parts))
+
+    def get(self, messages):
+        key = self._make_key(messages)
+        with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+                self._hits += 1
+                return self._cache[key]
+            self._misses += 1
+            return None
+
+    def put(self, messages, response):
+        if not response or len(response) < 20:
+            return
+        key = self._make_key(messages)
+        with self._lock:
+            self._cache[key] = response
+            self._cache.move_to_end(key)
+            if len(self._cache) > self._maxsize:
+                self._cache.popitem(last=False)
+
+    def invalidate(self):
+        with self._lock:
+            self._cache.clear()
+
+    def stats(self):
+        with self._lock:
+            total = self._hits + self._misses
+            hit_rate = (self._hits / total * 100) if total > 0 else 0
+            return {
+                "size": len(self._cache),
+                "maxsize": self._maxsize,
+                "hits": self._hits,
+                "misses": self._misses,
+                "hit_rate": round(hit_rate, 1),
+            }
+
+# ── Config ─────────────────────────────────────────────────
+LLAMA_HOST = os.environ.get("LLAMA_HOST", "http://localhost:8081")
+PORT = int(os.environ.get("PLAN_B_PORT", "3001"))
+FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
+PROJECT_ROOT = Path(__file__).parent.parent
+
+def _safe_print(msg):
+    try:
+        print(msg)
+    except UnicodeEncodeError:
+        try:
+            print(msg.encode('ascii', errors='replace').decode('ascii'))
+        except Exception:
+            pass
+
+# ── Dependencias opcionales ────────────────────────────────
+try:
+    import psutil
+    HAVE_PSUTIL = True
+except ImportError:
+    HAVE_PSUTIL = False
+    _safe_print("[B] [!] psutil no instalado. Stats no disponibles.")
+
+HAVE_NVML = False
+try:
+    import pynvml
+    pynvml.nvmlInit()
+    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+    name = pynvml.nvmlDeviceGetName(handle)
+    if isinstance(name, bytes):
+        name = name.decode('utf-8', errors='replace')
+    HAVE_NVML = True
+    _safe_print(f"[B] [OK] GPU: {str(name).replace(chr(0),'').strip()}")
+except Exception:
+    HAVE_NVML = False
+    _safe_print("[B] [!] pynvml no disponible. Stats GPU no disponibles.")
+
+# ── Piper TTS Python API ───────────────────────────────────
+HAVE_PIPER_PYTHON = False
+try:
+    from piper import PiperVoice
+    HAVE_PIPER_PYTHON = True
+except ImportError:
+    _safe_print("[B] [!] piper-tts no instalado. pip install piper-tts")
+
+class PiperTTS:
+    """Modelos Piper cargados en memoria. Latencia ~45-65ms."""
+    def __init__(self, es_model_path, en_model_path):
+        self.es_voice = None
+        self.en_voice = None
+        self.es_model_path = str(es_model_path) if es_model_path else None
+        self.en_model_path = str(en_model_path) if en_model_path else None
+        self.available = False
+        self._lock = threading.Lock()
+        self._init_voices()
+
+    def _init_voices(self):
+        if not HAVE_PIPER_PYTHON:
+            return
+        if self.es_model_path:
+            try:
+                t0 = time.time()
+                self.es_voice = PiperVoice.load(self.es_model_path, use_cuda=False)
+                _safe_print(f"[B] [PiperTTS] ES cargado en {(time.time()-t0)*1000:.0f}ms")
+            except Exception as e:
+                _safe_print(f"[B] [PiperTTS] Error ES: {e}")
+        if self.en_model_path:
+            try:
+                t0 = time.time()
+                self.en_voice = PiperVoice.load(self.en_model_path, use_cuda=False)
+                _safe_print(f"[B] [PiperTTS] EN cargado en {(time.time()-t0)*1000:.0f}ms")
+            except Exception as e:
+                _safe_print(f"[B] [PiperTTS] Error EN: {e}")
+        self.available = (self.es_voice is not None) or (self.en_voice is not None)
+
+    def synthesize(self, text, lang='es'):
+        voice = self.es_voice if lang == 'es' else self.en_voice if lang == 'en' else (self.es_voice or self.en_voice)
+        if voice is None:
+            return None
+        with self._lock:
+            try:
+                chunks = list(voice.synthesize(text))
+                if not chunks:
+                    return None
+                sample_rate = getattr(chunks[0], 'sample_rate', 22050)
+                int16_chunks = []
+                for c in chunks:
+                    if hasattr(c, 'audio_int16_array') and c.audio_int16_array is not None:
+                        int16_chunks.append(c.audio_int16_array)
+                    elif hasattr(c, 'audio_int16_bytes') and c.audio_int16_bytes is not None:
+                        int16_chunks.append(np.frombuffer(c.audio_int16_bytes, dtype=np.int16))
+                if not int16_chunks:
+                    return None
+                pcm = np.concatenate(int16_chunks)
+                data_size = len(pcm) * 2
+                buf = bytearray(44 + data_size)
+                buf[0:4] = b'RIFF'
+                struct.pack_into('<I', buf, 4, data_size + 36)
+                buf[8:12] = b'WAVE'
+                buf[12:16] = b'fmt '
+                struct.pack_into('<I', buf, 16, 16)
+                struct.pack_into('<H', buf, 20, 1)
+                struct.pack_into('<H', buf, 22, 1)
+                struct.pack_into('<I', buf, 24, sample_rate)
+                struct.pack_into('<I', buf, 28, sample_rate * 2)
+                struct.pack_into('<H', buf, 32, 2)
+                struct.pack_into('<H', buf, 34, 16)
+                buf[36:40] = b'data'
+                struct.pack_into('<I', buf, 40, data_size)
+                buf[44:44+data_size] = pcm.tobytes()
+                return bytes(buf)
+            except Exception as e:
+                _safe_print(f"[B] [PiperTTS] Error: {e}")
+                return None
+
+    def synthesize_stream(self, text, lang='es'):
+        voice = self.es_voice if lang == 'es' else self.en_voice if lang == 'en' else (self.es_voice or self.en_voice)
+        if voice is None:
+            return
+        sr = 22050
+        with self._lock:
+            try:
+                for c in voice.synthesize(text):
+                    if sr == 22050:
+                        sr = getattr(c, 'sample_rate', 22050)
+                    if hasattr(c, 'audio_int16_array') and c.audio_int16_array is not None:
+                        yield (sr, c.audio_int16_array.tobytes())
+                    elif hasattr(c, 'audio_int16_bytes') and c.audio_int16_bytes is not None:
+                        yield (sr, c.audio_int16_bytes)
+            except Exception as e:
+                _safe_print(f"[B] [PiperTTS] Stream error: {e}")
+
+    def stop(self):
+        self.es_voice = None
+        self.en_voice = None
+        self.available = False
+
+# ── ASR (faster-whisper) ───────────────────────────────────
+HAVE_FASTER_WHISPER = False
+_asr_models = {}
+_asr_lock = threading.Lock()
+
+try:
+    from faster_whisper import WhisperModel
+    HAVE_FASTER_WHISPER = True
+except ImportError:
+    _safe_print("[B] [!] faster-whisper no instalado. pip install faster-whisper")
+
+def _find_wav_data_offset(audio_bytes):
+    data_pos = audio_bytes.find(b'data', 12)
+    return data_pos + 8 if data_pos >= 0 else 44
+
+def _get_asr_model(model_name):
+    if model_name in _asr_models:
+        return _asr_models[model_name]
+    with _asr_lock:
+        if model_name in _asr_models:
+            return _asr_models[model_name]
+        try:
+            t0 = time.time()
+            model = WhisperModel(model_name, device="cpu", compute_type="int8")
+            _safe_print(f"[B] [ASR] faster-whisper {model_name} cargado en {(time.time()-t0)*1000:.0f}ms")
+            _asr_models[model_name] = model
+            return model
+        except Exception as e:
+            _safe_print(f"[B] [!] Error cargando {model_name}: {e}")
+            return None
+
+def _asr_transcribe(audio_bytes, language="auto", model_name="base"):
+    model = _get_asr_model(model_name)
+    if model is None:
+        return None, None, f"Modelo '{model_name}' no disponible"
+    try:
+        sr = 16000
+        if len(audio_bytes) >= 44:
+            sr = struct.unpack_from('<I', audio_bytes, 24)[0]
+        offset = _find_wav_data_offset(audio_bytes)
+        pcm_data = audio_bytes[offset:] if len(audio_bytes) > offset else audio_bytes[44:]
+        pcm_int16 = np.frombuffer(pcm_data, dtype=np.int16)
+        if len(pcm_int16) == 0:
+            return None, None, "Audio vacío"
+        pcm_float32 = pcm_int16.astype(np.float32) / 32768.0
+        lang_code = None if language == "auto" else language
+        with _asr_lock:
+            segments, info = model.transcribe(
+                pcm_float32, language=lang_code, beam_size=1,
+                vad_filter=True,
+                vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=200,
+                                    threshold=0.5, neg_threshold=0.35, min_speech_duration_ms=200),
+            )
+        seg_list = []
+        full_text = []
+        for seg in segments:
+            seg_list.append({"text": seg.text.strip(), "start": round(seg.start, 2), "end": round(seg.end, 2)})
+            full_text.append(seg.text.strip())
+        text = " ".join(full_text).strip()
+        return text, seg_list, None
+    except Exception as e:
+        return None, None, str(e)[:300]
+
+# ── Stats Collector ────────────────────────────────────────
+class StatsCollector:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.stats = {
+            "cpu_percent": 0.0, "ram_used_gb": 0.0, "ram_total_gb": 0.0, "ram_percent": 0.0,
+            "vram_used_mb": 0, "vram_total_mb": 0, "vram_percent": 0.0,
+            "gpu_percent": 0, "gpu_temp": 0,
+            "tokens_per_sec": 0.0, "context_used": 0, "context_max": 4096, "context_percent": 0.0,
+            "tokens_generated": 0, "prompt_tokens": 0, "is_processing": False, "n_slots": 0,
+            "llama_connected": False, "slots_detail": [],
+        }
+        self._last_decoded = 0
+        self._last_time = time.time()
+        self._tok_times = []
+        self._running = True
+        self._thread = threading.Thread(target=self._poll_loop, daemon=True)
+        self._thread.start()
+
+    def _poll_loop(self):
+        while self._running:
+            if HAVE_PSUTIL:
+                self._collect_system_stats()
+            if HAVE_NVML:
+                self._collect_gpu_stats()
+            self._collect_llama_stats()
+            time.sleep(1.8)
+
+    def _collect_system_stats(self):
+        try:
+            s = {}
+            s["cpu_percent"] = round(psutil.cpu_percent(interval=0), 1)
+            m = psutil.virtual_memory()
+            s["ram_used_gb"] = round(m.used / (1024**3), 1)
+            s["ram_total_gb"] = round(m.total / (1024**3), 1)
+            s["ram_percent"] = round(m.percent, 1)
+            with self.lock:
+                self.stats.update(s)
+        except Exception:
+            pass
+
+    def _collect_gpu_stats(self):
+        try:
+            s = {}
+            h = pynvml.nvmlDeviceGetHandleByIndex(0)
+            mi = pynvml.nvmlDeviceGetMemoryInfo(h)
+            s["vram_used_mb"] = round(mi.used / (1024**2), 0)
+            s["vram_total_mb"] = round(mi.total / (1024**2), 0)
+            s["vram_percent"] = round(mi.used / mi.total * 100, 1)
+            s["gpu_percent"] = pynvml.nvmlDeviceGetUtilizationRates(h).gpu
+            s["gpu_temp"] = pynvml.nvmlDeviceGetTemperature(h, pynvml.NVML_TEMPERATURE_GPU)
+            with self.lock:
+                self.stats.update(s)
+        except Exception:
+            pass
+
+    def _collect_llama_stats(self):
+        try:
+            req = urllib.request.Request(f"{LLAMA_HOST}/slots")
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                slots = json.loads(resp.read().decode())
+        except Exception:
+            with self.lock:
+                self.stats["llama_connected"] = False
+            return
+        if not isinstance(slots, list):
+            with self.lock:
+                self.stats["llama_connected"] = True
+            return
+        with self.lock:
+            self.stats["llama_connected"] = True
+            self.stats["n_slots"] = len(slots)
+            self.stats["slots_detail"] = slots[:4]
+            total_decoded = 0
+            total_prompt = 0
+            max_ctx = 4096
+            processing = False
+            for s in slots:
+                ctx = s.get("n_ctx", 4096)
+                max_ctx = max(max_ctx, ctx)
+                if s.get("is_processing"):
+                    processing = True
+                nt = s.get("next_token", {})
+                if isinstance(nt, dict):
+                    total_decoded += nt.get("n_decoded", 0) or 0
+                elif isinstance(nt, list) and len(nt) > 0:
+                    total_decoded += nt[0].get("n_decoded", 0) or 0
+                total_prompt += s.get("n_prompt_tokens", 0) or 0
+            self.stats["is_processing"] = processing
+            self.stats["context_max"] = max_ctx
+            self.stats["context_used"] = total_decoded
+            self.stats["context_percent"] = round((total_decoded / max_ctx * 100) if max_ctx > 0 else 0, 1)
+            self.stats["tokens_generated"] = total_decoded
+            self.stats["prompt_tokens"] = total_prompt
+            now = time.time()
+            if total_decoded > self._last_decoded:
+                dt = now - self._last_time
+                if dt > 0:
+                    rate = (total_decoded - self._last_decoded) / dt
+                    self._tok_times.append(rate)
+                    if len(self._tok_times) > 5:
+                        self._tok_times.pop(0)
+                    self.stats["tokens_per_sec"] = round(sum(self._tok_times) / len(self._tok_times), 1)
+            elif not processing:
+                if self._tok_times:
+                    if now - self._last_time > 3.0:
+                        self._tok_times = []
+                        self.stats["tokens_per_sec"] = 0.0
+                else:
+                    self.stats["tokens_per_sec"] = 0.0
+            self._last_decoded = total_decoded
+            self._last_time = now
+
+    def get_stats(self):
+        with self.lock:
+            return dict(self.stats)
+
+    def stop(self):
+        self._running = False
+
+# ── Detección de idioma ────────────────────────────────────
+def detect_language(text):
+    """Detecta es/en/ja en un texto."""
+    if not text.strip():
+        return 'en'
+    ja_chars = sum(1 for c in text if '\u3040' <= c <= '\u309f' or '\u30a0' <= c <= '\u30ff' or '\u4e00' <= c <= '\u9fff')
+    if ja_chars > 0:
+        return 'ja'
+    es_chars = sum(1 for c in text if '\u00e1' <= c <= '\u00fa' or c in 'ñçüöéèêëàâîôùû¿¡')
+    es_words = {'hola','gracias','como','estas','muy','bien','que','el','la','los','las','por','para','con','sin','es','son','del','más','todo','casa','agua','vida','mundo','día','noche','hoy','ayer','mañana','adios','luego','entonces','también','solo','cada','bienvenido','amigo','señor','señora','hablar','tener','hacer','poder','saber','querer','bueno','buena','grande','mejor','siempre','nunca','pronto','tarde','donde','cuando','porque','cual','quien','cuanto','año','semana','mes','lunes','martes','miercoles','jueves','viernes','sabado','domingo','saludos','gracias','muchas','favor','permiso','disculpa','siento','perdon','feliz','contento','cansado','bienvenido','nosotros','ellos','este','esta','ese','esa','aquel','leer','escribir','correr','comer','beber','dormir','vivir','morir','nacer','crecer','pensar','creer','recordar','olvidar','gustar','esperar','viajar','jugar','trabajar','estudiar','enseñar','aprender','entender','conocer','buscar','encontrar','perder','ganar','pagar','vender','comprar','llevar','traer','dejar','entrar','salir','subir','bajar','abrir','cerrar','empezar','terminar','cambiar','mejorar','empeorar','arreglar','romper','limpiar','ensuciar','cocinar','cantar','bailar','pintar','escribir','leer','correr','saltar','nadar','volar','caminar','sentar','parar'}
+    words = [w.strip('.,!?;:\'"()[]{}') for w in text.lower().split() if w.strip('.,!?;:\'"()[]{}')]
+    if not words:
+        return 'en'
+    es_count = sum(1 for w in words if w in es_words)
+    if es_count > 0 or es_chars > 0:
+        return 'es'
+    return 'en'
+
+def _run_piper_file(text, model_path, piper_exe):
+    """Fallback TTS usando archivos temporales."""
+    import tempfile
+    try:
+        with tempfile.NamedTemporaryFile(suffix='.txt', delete=False, mode='w', encoding='utf-8') as f:
+            f.write(text)
+            inp = f.name
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+            out = f.name
+        proc = subprocess.Popen(
+            [str(piper_exe), "--model", str(model_path), "--output-file", out],
+            stdin=open(inp, 'rb'), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        proc.wait(timeout=15)
+        if proc.returncode == 0 and os.path.exists(out):
+            data = open(out, 'rb').read()
+            try: os.unlink(out); os.unlink(inp)
+            except: pass
+            return data if len(data) > 100 else None
+        try: os.unlink(out); os.unlink(inp)
+        except: pass
+        return None
+    except Exception as e:
+        _safe_print(f"[B] [TTS-file] Error: {e}")
+        return None
+
+# ── Servidor HTTP ───────────────────────────────────────────
+_stats_collector = None
+_response_cache = ResponseCache(maxsize=50)
+_piper_tts = None
+
+class Handler(SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=str(FRONTEND_DIR), **kwargs)
+
+    def do_GET(self):
+        if self.path == "/api/stats":
+            self._json_response(_stats_collector.get_stats())
+        elif self.path == "/api/cache/stats":
+            self._json_response(_response_cache.stats())
+        elif self.path == "/api/cache/clear":
+            _response_cache.invalidate()
+            self._json_response({"ok": True})
+        elif self.path in ("/", "/index.html"):
+            self._serve_file("plan-b/index.html")
+        else:
+            super().do_GET()
+
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length) if length > 0 else b"{}"
+        if self.path == "/api/chat":
+            self._handle_chat(body)
+        elif self.path == "/api/tts":
+            self._handle_tts(body)
+        elif self.path == "/api/tts/stream":
+            self._handle_tts_stream(body)
+        elif self.path == "/api/asr":
+            self._handle_asr(body)
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def _handle_chat(self, body):
+        """Proxy a llama-server con caché LRU."""
+        try:
+            data = json.loads(body)
+            if "messages" not in data and "prompt" in data:
+                messages = []
+                prompt = data["prompt"]
+                parts = re.split(r'<\|im_start\|>(\w+)\n', prompt)
+                for i in range(1, len(parts)-1, 2):
+                    role = parts[i]
+                    content = parts[i+1].replace('<|im_end|>', '').strip()
+                    if role == 'system':
+                        messages.insert(0, {"role": "system", "content": content})
+                    elif role in ('user', 'assistant'):
+                        messages.append({"role": role, "content": content})
+                chat_data = {
+                    "messages": messages,
+                    "n_predict": data.get("n_predict", 512),
+                    "temperature": data.get("temperature", 0.7),
+                    "stream": data.get("stream", False),
+                }
+            else:
+                chat_data = data
+
+            # Cache check (non-streaming only)
+            if not chat_data.get("stream"):
+                cached = _response_cache.get(chat_data.get("messages", []))
+                if cached:
+                    _safe_print(f"[B] [proxy] Cache HIT! {len(cached)} chars")
+                    result = {
+                        "choices": [{"message": {"content": cached}}],
+                        "usage": {"completion_tokens": 0, "prompt_tokens": 0},
+                        "cached": True,
+                    }
+                    self._json_response(result)
+                    return
+
+            target = f"{LLAMA_HOST}/chat/completions"
+            req = urllib.request.Request(
+                target,
+                data=json.dumps(chat_data).encode(),
+                headers={"Content-Type": "application/json"},
+            )
+
+            if chat_data.get("stream"):
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream")
+                    self.send_header("Cache-Control", "no-cache")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    while True:
+                        chunk = resp.read(4096)
+                        if not chunk:
+                            break
+                        try:
+                            self.wfile.write(chunk)
+                            self.wfile.flush()
+                        except Exception:
+                            break
+            else:
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    result = json.loads(resp.read().decode())
+                content = ""
+                choices = result.get("choices", [])
+                if choices:
+                    content = choices[0].get("message", {}).get("content", "")
+                if content and len(content) > 20:
+                    _response_cache.put(chat_data.get("messages", []), content)
+                self._json_response(result)
+
+        except urllib.error.HTTPError as e:
+            err = e.read().decode(errors='replace')[:500]
+            _safe_print(f"[B] [proxy] llama-server HTTP {e.code}")
+            self._json_response({"error": f"HTTP {e.code}: {err}"})
+        except Exception as e:
+            _safe_print(f"[B] [proxy] {type(e).__name__}: {e}")
+            self._json_response({"error": str(e)[:300]})
+
+    def _handle_tts(self, body):
+        """TTS con Piper Python API. ~45ms latencia."""
+        global _piper_tts
+        t0 = time.time()
+        try:
+            data = json.loads(body)
+            text = data.get("text", "").strip()
+            lang = data.get("lang", "auto")
+            if not text:
+                self._json_response({"error": "texto vacio"})
+                return
+
+            wav_data = None
+            method = "python_api"
+            model_name = ""
+
+            if _piper_tts and _piper_tts.available:
+                if lang == 'en':
+                    model_name = "en_US-lessac-medium"
+                    wav_data = _piper_tts.synthesize(text, 'en')
+                elif lang == 'es':
+                    model_name = "es_ES-sharvard-medium"
+                    wav_data = _piper_tts.synthesize(text, 'es')
+                else:
+                    detected = detect_language(text)
+                    model_name = "es_ES-sharvard-medium" if detected == 'es' else "en_US-lessac-medium"
+                    wav_data = _piper_tts.synthesize(text, detected if detected in ('es', 'en') else 'es')
+
+            if wav_data is None or len(wav_data) < 100:
+                # Fallback: piper.exe subprocess
+                piper_exe = PROJECT_ROOT / "bin" / "piper" / "piper.exe"
+                es_model = PROJECT_ROOT / "models" / "es_ES-sharvard-medium.onnx"
+                en_model = PROJECT_ROOT / "models" / "en_US-lessac-medium.onnx"
+                if lang == 'en' and en_model.exists():
+                    mp = en_model
+                else:
+                    mp = es_model
+                wav_data = _run_piper_file(text, mp, piper_exe)
+                method = "subprocess_fallback"
+
+            if not wav_data or len(wav_data) < 100:
+                self._json_response({"error": "No se genero audio"})
+                return
+
+            dur = round((time.time() - t0) * 1000)
+            _safe_print(f"[B] [TTS] {len(wav_data)}B en {dur}ms ({method})")
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/wav")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Content-Length", str(len(wav_data)))
+            self.end_headers()
+            self.wfile.write(wav_data)
+
+        except Exception as e:
+            _safe_print(f"[B] [TTS] Error: {e}")
+            self._json_response({"error": str(e)[:200]})
+
+    def _handle_tts_stream(self, body):
+        """Streaming TTS con Piper. Envía raw PCM por chunked transfer."""
+        global _piper_tts
+        t0 = time.time()
+        headers_sent = False
+        try:
+            data = json.loads(body)
+            text = data.get("text", "").strip()
+            lang = data.get("lang", "auto")
+            if not text or not _piper_tts or not _piper_tts.available:
+                self._json_response({"error": "TTS no disponible"})
+                return
+            if lang not in ('es', 'en'):
+                detected = detect_language(text)
+                lang = detected if detected in ('es', 'en') else 'es'
+
+            total_pcm = 0
+            for sr, pcm in _piper_tts.synthesize_stream(text, lang):
+                if not headers_sent:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "audio/L16")
+                    self.send_header("X-Sample-Rate", str(sr))
+                    self.send_header("X-Channels", "1")
+                    self.send_header("X-Bits-Per-Sample", "16")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    headers_sent = True
+                self.wfile.write(pcm)
+                self.wfile.flush()
+                total_pcm += len(pcm)
+            _safe_print(f"[B] [TTS-stream] {total_pcm}B en {(time.time()-t0)*1000:.0f}ms")
+        except Exception as e:
+            if not headers_sent:
+                self._json_response({"error": str(e)[:200]})
+
+    def _handle_asr(self, body):
+        """ASR con faster-whisper. Auto-switch: base (ES/EN), small (JA)."""
+        t0 = time.time()
+        lang = "auto"
+        try:
+            data = json.loads(body)
+            audio_b64 = data.get("audio", "")
+            lang = data.get("lang", "auto")
+            if not audio_b64:
+                self._json_response({"error": "No audio"})
+                return
+            raw_audio = base64.b64decode(audio_b64)
+        except Exception as e:
+            self._json_response({"error": f"Error: {str(e)[:100]}"})
+            return
+
+        if len(raw_audio) < 100:
+            self._json_response({"error": "Audio demasiado pequeño"})
+            return
+
+        text_result = None
+        segments_result = None
+        error_msg = None
+        method_used = "faster-whisper"
+
+        if HAVE_FASTER_WHISPER and _get_asr_model("base") is not None:
+            initial = "small" if lang == "ja" else "base"
+            try:
+                text_result, segments_result, error_msg = _asr_transcribe(raw_audio, lang, initial)
+            except Exception as e:
+                error_msg = str(e)[:200]
+
+            # Auto-detect: si base detecta JA, re-ejecutar con small
+            if text_result and lang == "auto":
+                has_ja = any('\u3040' <= c <= '\u309f' or '\u30a0' <= c <= '\u30ff' or '\u4e00' <= c <= '\u9fff' for c in text_result)
+                if has_ja and initial != "small":
+                    _safe_print(f"[B] [ASR] JA detectado → small")
+                    try:
+                        t2, s2, _ = _asr_transcribe(raw_audio, "ja", "small")
+                        if t2:
+                            text_result, segments_result = t2, s2
+                            error_msg = None
+                            method_used = "faster-whisper-auto-ja"
+                    except Exception:
+                        pass
+
+        if not text_result:
+            error_msg = error_msg or "ASR no disponible"
+            self._json_response({"error": error_msg})
+            return
+
+        dur = round((time.time() - t0) * 1000)
+        _safe_print(f"[B] [ASR] {len(text_result)} chars en {dur}ms ({method_used})")
+        self._json_response({
+            "text": text_result,
+            "segments": segments_result or [],
+            "language": lang,
+            "duration_ms": dur,
+        })
+
+    def _json_response(self, data):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode())
+
+    def _serve_file(self, rel_path):
+        fp = FRONTEND_DIR / rel_path
+        if fp.exists():
+            self.path = f"/{rel_path}"
+            super().do_GET()
+        else:
+            self.send_response(404)
+            self.end_headers()
+            self.wfile.write(b"Not found")
+
+    def log_message(self, fmt, *args):
+        msg = fmt % args
+        if "/api/stats" not in msg:
+            _safe_print(f"[B] {msg}")
+
+# ── Entry point ────────────────────────────────────────────
+def main():
+    import sys
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
+    global _stats_collector
+    _stats_collector = StatsCollector()
+    httpd = HTTPServer(("0.0.0.0", PORT), Handler)
+
+    _safe_print(f"\n{'='*50}")
+    _safe_print(f"  >> Alex Voice — Plan B (GPU+CPU)")
+    _safe_print(f"{'='*50}")
+    _safe_print(f"  Web UI:       http://localhost:{PORT}")
+    _safe_print(f"  Stats API:    http://localhost:{PORT}/api/stats")
+    _safe_print(f"  llama-server: {LLAMA_HOST}")
+    _safe_print(f"  Cache:        LRU {_response_cache._maxsize} entradas")
+    _safe_print(f"  TTS:          Piper Python API (~45ms) + Streaming")
+    _safe_print(f"  ASR:          faster-whisper (base + small auto-switch)")
+    _safe_print(f"{'='*50}\n")
+
+    # Cargar ASR base al inicio
+    if HAVE_FASTER_WHISPER:
+        _get_asr_model("base")
+
+    # Cargar Piper TTS
+    global _piper_tts
+    es_model = PROJECT_ROOT / "models" / "es_ES-sharvard-medium.onnx"
+    en_model = PROJECT_ROOT / "models" / "en_US-lessac-medium.onnx"
+    if es_model.exists() or en_model.exists():
+        _piper_tts = PiperTTS(
+            es_model_path=es_model if es_model.exists() else None,
+            en_model_path=en_model if en_model.exists() else None,
+        )
+        if _piper_tts and _piper_tts.available:
+            _safe_print(f"[B] [PiperTTS] Listo! Latencia ~45ms por sintesis")
+
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        _safe_print("\n[B] Deteniendo...")
+    finally:
+        _stats_collector.stop()
+        if _piper_tts:
+            _piper_tts.stop()
+        httpd.server_close()
+        if HAVE_NVML:
+            try: pynvml.nvmlShutdown()
+            except: pass
+        _safe_print("[B] Detenido.")
+
+if __name__ == "__main__":
+    main()
