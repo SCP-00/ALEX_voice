@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Debug · Alex Voice</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Syne:wght@400;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#080312;--surface:#100520;--surface2:#1c0838;--surface3:#2c0d50;--border:#3a1070;--border2:#4a1a88;--text:#e4d0ff;--textDim:#a080cc;--textMuted:#6a4d99;--accent:#b44aff;--accent2:#7c3aed;--accent3:#e040ff;--green:#34d399;--yellow:#fbbf24;--red:#ef4444;--orange:#fb923c;--cyan:#22d3ee;--glow:rgba(180,74,255,.25)}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Space Grotesk',sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column;overflow:hidden;font-size:13px}
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+::-webkit-scrollbar-thumb:hover{background:var(--accent2)}
+
+/* HEADER */
+.header{display:flex;align-items:center;padding:8px 16px;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0;gap:10px;flex-wrap:wrap}
+.header .logo{font-family:'Syne',sans-serif;font-size:18px;font-weight:800;background:linear-gradient(135deg,var(--accent),var(--accent3));-webkit-background-clip:text;-webkit-text-fill-color:transparent;display:flex;align-items:center;gap:6px;flex-shrink:0}
+.header .logo span{font-size:10px;background:var(--surface2);-webkit-text-fill-color:var(--textDim);padding:2px 8px;border-radius:8px;border:1px solid var(--border);font-family:'Space Grotesk',sans-serif}
+.header-badge{display:flex;align-items:center;gap:5px;font-size:10px;padding:3px 10px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);color:var(--textDim)}
+.header-badge .dot{width:5px;height:5px;border-radius:50%}
+.dot-green{background:var(--green);box-shadow:0 0 6px rgba(52,211,153,.5)}
+.dot-yellow{background:var(--yellow);box-shadow:0 0 6px rgba(251,191,36,.5)}
+.dot-red{background:var(--red);box-shadow:0 0 6px rgba(239,68,68,.5)}
+.header-right{margin-left:auto;display:flex;align-items:center;gap:6px}
+.header-right button,.header-right select{padding:4px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--textDim);font-family:inherit;font-size:10px;cursor:pointer;transition:all .2s}
+.header-right button:hover,.header-right select:hover{border-color:var(--accent);color:var(--text);background:var(--surface3)}
+.header-right .count{font-size:10px;color:var(--textMuted);font-family:'JetBrains Mono',monospace}
+.header-right .live-dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 2s infinite;display:inline-block;margin-right:4px}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+#searchInput{padding:4px 10px 4px 28px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:10px;outline:none;width:180px;transition:all .2s}
+#searchInput:focus{border-color:var(--accent);box-shadow:0 0 8px var(--glow);width:240px}
+#searchInput::placeholder{color:var(--textMuted)}
+.search-wrap{position:relative;display:inline-block}
+.search-wrap .icon{position:absolute;left:8px;top:50%;transform:translateY(-50%);font-size:10px;pointer-events:none}
+
+/* TABS */
+.tab-bar{display:flex;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0;overflow-x:auto;padding:0 12px}
+.tab-bar::-webkit-scrollbar{height:0}
+.tab-btn{padding:8px 16px;font-size:11px;font-weight:500;color:var(--textDim);cursor:pointer;border:none;background:transparent;border-bottom:2px solid transparent;transition:all .2s;font-family:inherit;white-space:nowrap;display:flex;align-items:center;gap:5px}
+.tab-btn:hover{color:var(--text);background:var(--surface2)}
+.tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab-btn .count-badge{font-size:8px;padding:1px 5px;border-radius:8px;background:var(--surface3);color:var(--textMuted);margin-left:2px}
+
+/* MAIN CONTENT */
+.main{flex:1;overflow:hidden;position:relative}
+.tab-content{display:none;height:100%;overflow:hidden;position:absolute;top:0;left:0;right:0;bottom:0}
+.tab-content.active{display:flex;flex-direction:column}
+
+/* ── TIMELINE TAB ── */
+.timeline-panel{flex:1;overflow-y:auto;padding:6px 12px}
+.timeline-panel::-webkit-scrollbar{width:4px}
+.entry{display:flex;gap:6px;padding:4px 8px;border-radius:4px;font-size:11px;line-height:1.5;font-family:'JetBrains Mono',monospace;border-bottom:1px solid rgba(58,16,112,.2);animation:fadeIn .15s ease;align-items:flex-start}
+@keyframes fadeIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:translateY(0)}}
+.entry:hover{background:var(--surface2)}
+.entry .time{color:var(--textMuted);font-size:9px;min-width:72px;flex-shrink:0;padding-top:2px}
+.entry .badge{font-size:8px;padding:1px 5px;border-radius:3px;font-weight:600;text-transform:uppercase;flex-shrink:0;margin-top:2px;letter-spacing:.3px;line-height:1.4}
+.badge-input{background:rgba(52,211,153,.12);color:var(--green);border:1px solid rgba(52,211,153,.2)}
+.badge-output{background:rgba(34,211,238,.12);color:var(--cyan);border:1px solid rgba(34,211,238,.2)}
+.badge-tts{background:rgba(180,74,255,.12);color:var(--accent);border:1px solid rgba(180,74,255,.2)}
+.badge-tts_start{background:rgba(180,74,255,.12);color:var(--accent);border:1px solid rgba(180,74,255,.2)}
+.badge-tts_play{background:rgba(180,74,255,.1);color:var(--accent3);border:1px solid rgba(180,74,255,.15)}
+.badge-tts_error{background:rgba(239,68,68,.12);color:var(--red);border:1px solid rgba(239,68,68,.2)}
+.badge-error{background:rgba(239,68,68,.12);color:var(--red);border:1px solid rgba(239,68,68,.2)}
+.badge-lang_detect{background:rgba(251,191,36,.1);color:var(--yellow);border:1px solid rgba(251,191,36,.15)}
+.badge-segmentation{background:rgba(52,211,153,.08);color:var(--green);border:1px solid rgba(52,211,153,.12)}
+.badge-chat_request{background:rgba(34,211,238,.08);color:var(--cyan);border:1px solid rgba(34,211,238,.12)}
+.badge-chat_response{background:rgba(34,211,238,.08);color:var(--cyan);border:1px solid rgba(34,211,238,.12)}
+.badge-system{background:rgba(251,191,36,.08);color:var(--yellow);border:1px solid rgba(251,191,36,.12)}
+.badge-mode_change{background:rgba(251,191,36,.1);color:var(--yellow);border:1px solid rgba(251,191,36,.15)}
+.badge-asr{background:rgba(34,211,238,.08);color:var(--cyan);border:1px solid rgba(34,211,238,.12)}
+.badge-asr_error{background:rgba(239,68,68,.1);color:var(--red);border:1px solid rgba(239,68,68,.15)}
+.entry .data{flex:1;min-width:0;word-break:break-word;color:var(--text);font-size:10px}
+.entry .data .hl{background:rgba(180,74,255,.2);border-radius:2px;padding:0 3px}
+.entry .meta{display:flex;gap:3px;flex-wrap:wrap;flex-shrink:0;align-items:flex-start;margin-top:1px}
+.meta-tag{font-size:7px;padding:1px 4px;border-radius:3px;background:var(--surface2);border:1px solid var(--border);color:var(--textMuted);line-height:1.4;white-space:nowrap}
+.tag-ja{background:rgba(244,63,94,.15)!important;border-color:rgba(244,63,94,.2)!important;color:var(--red)!important}
+.tag-es{background:rgba(251,191,36,.1)!important;border-color:rgba(251,191,36,.15)!important;color:var(--yellow)!important}
+.tag-en{background:rgba(34,211,238,.1)!important;border-color:rgba(34,211,238,.15)!important;color:var(--cyan)!important}
+.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;height:200px;color:var(--textMuted);font-size:12px;gap:6px}
+.empty-state .icon{font-size:32px;opacity:.3}
+
+/* ── ANALYTICS TAB ── */
+.analytics-grid{padding:12px 16px;overflow-y:auto;flex:1;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;align-content:start}
+.analytics-card{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px}
+.analytics-card h3{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--textMuted);margin-bottom:8px}
+.analytics-card .big-num{font-size:28px;font-weight:700;font-family:'Syne',sans-serif;background:linear-gradient(135deg,var(--accent),var(--accent3));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.analytics-card .sub{font-size:10px;color:var(--textMuted);margin-top:2px}
+.type-list{display:flex;flex-direction:column;gap:3px}
+.type-row{display:flex;align-items:center;gap:6px;font-size:10px}
+.type-row .bar{flex:1;height:4px;background:var(--surface3);border-radius:2px;overflow:hidden}
+.type-row .fill{height:100%;border-radius:2px}
+.type-row .label{min-width:70px;color:var(--textDim)}
+.type-row .val{font-family:'JetBrains Mono',monospace;color:var(--text);min-width:30px;text-align:right}
+.lang-list{display:flex;flex-direction:column;gap:4px}
+.lang-row{display:flex;align-items:center;gap:6px;font-size:11px}
+.lang-row .flag{font-size:14px}
+.lang-row .bar{flex:1;height:6px;background:var(--surface3);border-radius:3px;overflow:hidden}
+.lang-row .fill{height:100%;border-radius:3px;transition:width .5s}
+.lang-row .pct{font-family:'JetBrains Mono',monospace;min-width:32px;text-align:right;font-size:10px;color:var(--textDim)}
+.latency-row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(58,16,112,.2);font-size:10px}
+.latency-row .lbl{color:var(--textDim)}
+.latency-row .val{font-family:'JetBrains Mono',monospace;color:var(--text)}
+.latency-row .val.good{color:var(--green)}
+.latency-row .val.ok{color:var(--yellow)}
+.latency-row .val.bad{color:var(--red)}
+
+/* ── HARDWARE TAB ── */
+.hardware-grid{padding:12px 16px;overflow-y:auto;flex:1;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;align-content:start}
+.hw-card{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px}
+.hw-card h3{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--textMuted);margin-bottom:8px;display:flex;align-items:center;gap:5px}
+.hw-stat{display:flex;justify-content:space-between;padding:3px 0;font-size:11px;border-bottom:1px solid rgba(58,16,112,.15)}
+.hw-stat:last-child{border-bottom:none}
+.hw-stat .lbl{color:var(--textDim)}
+.hw-stat .val{font-family:'JetBrains Mono',monospace;font-weight:500}
+.hw-bar-group{display:flex;flex-direction:column;gap:5px;margin-top:6px}
+.hw-bar-wrap{display:flex;align-items:center;gap:6px;font-size:10px}
+.hw-bar-wrap .icon{width:16px;text-align:center;flex-shrink:0}
+.hw-bar-wrap .track{flex:1;height:6px;background:var(--surface3);border-radius:3px;overflow:hidden}
+.hw-bar-wrap .fill{height:100%;border-radius:3px;transition:width .5s ease}
+.hw-bar-wrap .val{min-width:44px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--textDim)}
+.hw-bar-wrap.val-rich .val{font-size:9px;min-width:70px}
+.fill-purple{background:linear-gradient(90deg,var(--accent2),var(--accent))}
+.fill-blue{background:linear-gradient(90deg,#2563eb,var(--cyan))}
+.fill-orange{background:linear-gradient(90deg,#ea580c,var(--orange))}
+.fill-yellow{background:linear-gradient(90deg,#d97706,var(--yellow))}
+.fill-green{background:linear-gradient(90deg,#059669,var(--green))}
+.fill-red{background:linear-gradient(90deg,var(--red),#dc2626)}
+
+/* ── TTS TAB ── */
+.tts-grid{padding:12px 16px;overflow-y:auto;flex:1;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;align-content:start}
+.tts-history{grid-column:1/-1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;max-height:300px;overflow-y:auto}
+.tts-history h3{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--textMuted);margin-bottom:8px}
+.tts-row{display:flex;gap:6px;padding:3px 6px;border-radius:4px;font-size:10px;font-family:'JetBrains Mono',monospace;border-bottom:1px solid rgba(58,16,112,.12)}
+.tts-row:hover{background:var(--surface3)}
+.tts-row .tts-time{color:var(--textMuted);min-width:62px;font-size:9px}
+.tts-row .tts-lang{min-width:28px;font-size:9px;font-weight:600}
+.tts-row .tts-voice{color:var(--textDim);min-width:80px;font-size:9px}
+.tts-row .tts-ms{min-width:44px;text-align:right;font-size:9px}
+.tts-row .tts-chars{min-width:30px;text-align:right;font-size:9px;color:var(--textMuted)}
+.tts-row .tts-method{font-size:8px;color:var(--textMuted);min-width:50px}
+.tts-row .tts-status{font-size:8px}
+
+/* RESPONSIVE */
+@media(max-width:640px){
+  .header{font-size:11px;gap:6px}
+  #searchInput{width:120px}
+  #searchInput:focus{width:160px}
+  .analytics-grid,.hardware-grid,.tts-grid{grid-template-columns:1fr;padding:8px}
+}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="logo">⚡ debug <span>v2</span></div>
+  <div class="header-badge"><span class="dot dot-green" id="headerDot"></span><span id="headerStatus">Conectando</span></div>
+  <div class="header-right">
+    <div class="search-wrap">
+      <span class="icon">🔍</span>
+      <input id="searchInput" type="text" placeholder="Buscar en logs..." oninput="applyTimelineFilter()">
+    </div>
+    <span class="count" id="logCount">0</span>
+    <button onclick="clearLogs()" title="Limpiar eventos">🗑️</button>
+    <button onclick="exportLogs()" title="Exportar JSON">📥</button>
+    <button onclick="document.querySelector('.timeline-panel').scrollTop=0" title="Ir al inicio">⬆</button>
+  </div>
+</div>
+
+<!-- TABS -->
+<div class="tab-bar" id="tabBar">
+  <button class="tab-btn active" data-tab="timeline" onclick="switchTab('timeline')">📋 Timeline <span class="count-badge" id="tabCountTimeline">0</span></button>
+  <button class="tab-btn" data-tab="analytics" onclick="switchTab('analytics')">📊 Analytics</button>
+  <button class="tab-btn" data-tab="hardware" onclick="switchTab('hardware')">🎮 Hardware</button>
+  <button class="tab-btn" data-tab="tts" onclick="switchTab('tts')">🗣️ TTS</button>
+</div>
+
+<!-- MAIN -->
+<div class="main">
+
+  <!-- TIMELINE TAB -->
+  <div class="tab-content active" id="tabTimeline">
+    <div class="timeline-panel" id="logContainer">
+      <div class="empty-state"><div class="icon">📡</div><div>Esperando eventos...</div><div style="font-size:10px;color:var(--textMuted)">Usa la interfaz Plan A para generar actividad</div></div>
+    </div>
+  </div>
+
+  <!-- ANALYTICS TAB -->
+  <div class="tab-content" id="tabAnalytics">
+    <div class="analytics-grid" id="analyticsContainer">
+      <div class="analytics-card">
+        <h3>📈 Eventos</h3>
+        <div class="big-num" id="totalEvents">0</div>
+        <div class="sub">totales en sesión</div>
+      </div>
+      <div class="analytics-card">
+        <h3>⏱️ TTS Promedio</h3>
+        <div class="big-num" id="ttsAvgMs">0ms</div>
+        <div class="sub" id="ttsCountLabel">— generaciones</div>
+      </div>
+      <div class="analytics-card">
+        <h3>⚡ Chat Promedio</h3>
+        <div class="big-num" id="chatAvgMs">0ms</div>
+        <div class="sub" id="chatCountLabel">— respuestas</div>
+      </div>
+      <div class="analytics-card">
+        <h3>❌ Errores</h3>
+        <div class="big-num" id="errorCount" style="background:linear-gradient(135deg,var(--red),#dc2626);-webkit-background-clip:text;-webkit-text-fill-color:transparent">0</div>
+        <div class="sub">en total</div>
+      </div>
+      <div class="analytics-card" style="grid-column:span 1">
+        <h3>📊 Por Tipo</h3>
+        <div class="type-list" id="typeBreakdown"></div>
+      </div>
+      <div class="analytics-card" style="grid-column:span 1">
+        <h3>🌐 Por Idioma</h3>
+        <div class="lang-list" id="langBreakdown"></div>
+      </div>
+      <div class="analytics-card" style="grid-column:span 1">
+        <h3>⏱️ Latencias</h3>
+        <div id="latencyBreakdown"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- HARDWARE TAB -->
+  <div class="tab-content" id="tabHardware">
+    <div class="hardware-grid" id="hardwareContainer">
+      <div class="hw-card">
+        <h3>🎮 GPU</h3>
+        <div class="hw-stat"><span class="lbl">Nombre</span><span class="val" id="gpuName">—</span></div>
+        <div class="hw-stat"><span class="lbl">Driver</span><span class="val" id="gpuDriver">—</span></div>
+        <div class="hw-bar-group">
+          <div class="hw-bar-wrap val-rich">
+            <span class="icon">🎮</span>
+            <div class="track"><div class="fill fill-purple" id="vramBar" style="width:0%"></div></div>
+            <span class="val" id="vramVal">— / — MB</span>
+          </div>
+          <div class="hw-bar-wrap val-rich">
+            <span class="icon">🔥</span>
+            <div class="track"><div class="fill fill-orange" id="gpuBar" style="width:0%"></div></div>
+            <span class="val" id="gpuUtilVal">0%</span>
+          </div>
+          <div class="hw-bar-wrap val-rich">
+            <span class="icon">🌡️</span>
+            <div class="track"><div class="fill fill-yellow" id="tempBar" style="width:0%"></div></div>
+            <span class="val" id="tempVal">—°C</span>
+          </div>
+          <div class="hw-bar-wrap val-rich">
+            <span class="icon">⚡</span>
+            <div class="track"><div class="fill fill-green" id="tpsBar" style="width:0%"></div></div>
+            <span class="val" id="tpsVal">0 tok/s</span>
+          </div>
+        </div>
+      </div>
+      <div class="hw-card">
+        <h3>💾 Memoria</h3>
+        <div class="hw-bar-group">
+          <div class="hw-bar-wrap val-rich">
+            <span class="icon">💾</span>
+            <div class="track"><div class="fill fill-blue" id="ramBar" style="width:0%"></div></div>
+            <span class="val" id="ramVal">— / — GB</span>
+          </div>
+          <div class="hw-bar-wrap val-rich">
+            <span class="icon">⚙️</span>
+            <div class="track"><div class="fill fill-yellow" id="cpuBar" style="width:0%"></div></div>
+            <span class="val" id="cpuVal">0%</span>
+          </div>
+        </div>
+        <div style="margin-top:10px">
+          <div class="hw-stat"><span class="lbl">Cores físicos</span><span class="val" id="cpuCoresPhys">—</span></div>
+          <div class="hw-stat"><span class="lbl">Cores lógicos</span><span class="val" id="cpuCoresLog">—</span></div>
+        </div>
+      </div>
+      <div class="hw-card">
+        <h3>🔗 LLM Server</h3>
+        <div class="hw-stat"><span class="lbl">Estado</span><span class="val" id="llamaConnected">—</span></div>
+        <div class="hw-stat"><span class="lbl">Slots</span><span class="val" id="llamaSlots">—</span></div>
+        <div class="hw-stat"><span class="lbl">Contexto</span><span class="val" id="llamaCtx">— / —</span></div>
+        <div class="hw-bar-wrap" style="margin-top:6px">
+          <span style="font-size:10px">🧠 Contexto</span>
+          <div class="track"><div class="fill fill-purple" id="ctxBar" style="width:0%"></div></div>
+          <span class="val" id="ctxPct" style="font-size:10px;min-width:30px">0%</span>
+        </div>
+      </div>
+      <div class="hw-card" style="grid-column:1/-1">
+        <h3>📈 Tokens/s (últimos 30s)</h3>
+        <div style="display:flex;align-items:flex-end;gap:2px;height:80px;padding:4px 0" id="tpsHistory">
+          <div style="flex:1;height:100%;display:flex;align-items:flex-end;gap:2px" id="tpsBars"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TTS TAB -->
+  <div class="tab-content" id="tabTts">
+    <div class="tts-grid" id="ttsContainer">
+      <div class="analytics-card">
+        <h3>🗣️ TTS Total</h3>
+        <div class="big-num" id="ttsTotal">0</div>
+        <div class="sub">generaciones</div>
+      </div>
+      <div class="analytics-card">
+        <h3>⚡ Latencia Promedio</h3>
+        <div class="big-num" id="ttsAvgLatency">0ms</div>
+        <div class="sub" id="ttsAvgDetail">—</div>
+      </div>
+      <div class="analytics-card">
+        <h3>🎤 Voces</h3>
+        <div class="lang-list" id="voiceBreakdown"></div>
+      </div>
+      <div class="analytics-card">
+        <h3>🔧 Métodos</h3>
+        <div class="lang-list" id="methodBreakdown"></div>
+      </div>
+      <div class="tts-history">
+        <h3>📋 Historial de TTS</h3>
+        <div id="ttsHistoryList">
+          <div class="empty-state" style="height:60px"><div class="icon">🎤</div><div>Sin actividad TTS aún</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── CONFIG ──────────────────────────────────────────
+const LOGS_URL = 'http://localhost:3000/api/logs';
+const STATS_URL = 'http://localhost:3000/api/stats';
+const STATS_FULL_URL = 'http://localhost:3000/api/hardware';
+const LOGS_STATS_URL = 'http://localhost:3000/api/logs/stats';
+
+let allEntries = [];
+let currentTab = 'timeline';
+let filterType = 'all';
+let searchQuery = '';
+let tpsHistoryData = new Array(30).fill(0);
+
+// ── HELPERS ─────────────────────────────────────────
+function escapeHtml(t) {
+  const d = document.createElement('div'); d.textContent = t; return d.innerHTML;
+}
+
+function formatTime(ts) {
+  return ts || '--:--:--';
+}
+
+function badgeClass(type) {
+  if (!type) return 'info';
+  const map = {
+    'input': 'badge-input', 'output': 'badge-output',
+    'tts': 'badge-tts', 'tts_start': 'badge-tts_start', 'tts_play': 'badge-tts_play',
+    'tts_error': 'badge-tts_error',
+    'error': 'badge-error',
+    'lang_detect': 'badge-lang_detect',
+    'segmentation': 'badge-segmentation',
+    'chat_request': 'badge-chat_request', 'chat_response': 'badge-chat_response',
+    'asr': 'badge-asr', 'asr_error': 'badge-asr_error',
+    'system': 'badge-system', 'mode_change': 'badge-mode_change',
+    'info': 'badge-info', 'asr_mode': 'badge-asr'
+  };
+  return map[type] || 'badge-info';
+}
+
+function langTag(lang) {
+  if (!lang) return '';
+  return `<span class="meta-tag tag-${lang}">${lang.toUpperCase()}</span>`;
+}
+
+function detectLangFromText(t) {
+  if (!t) return '';
+  if (/[\u3040-\u309f\u30a0-\u30ff\u4e00-\u9fff]/.test(t)) return 'ja';
+  if (/[áéíóúñü¿¡]/i.test(t)) return 'es';
+  return 'en';
+}
+
+function timeAgo(ts) {
+  if (!ts) return '';
+  const diff = Date.now() / 1000 - ts;
+  if (diff < 5) return 'ahora';
+  if (diff < 60) return Math.round(diff) + 's';
+  if (diff < 3600) return Math.round(diff / 60) + 'm';
+  return Math.round(diff / 3600) + 'h';
+}
+
+// ── TAB SWITCHING ──────────────────────────────────
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById('tab' + tab.charAt(0).toUpperCase() + tab.slice(1)).classList.add('active');
+  if (tab === 'analytics') renderAnalytics();
+  if (tab === 'hardware') fetchHardwareDetail();
+  if (tab === 'tts') renderTtsTab();
+}
+
+// ── TIMELINE RENDERING ──────────────────────────────
+function applyTimelineFilter() {
+  searchQuery = document.getElementById('searchInput').value.toLowerCase();
+  renderTimeline();
+}
+
+function renderTimeline() {
+  const container = document.getElementById('logContainer');
+  const countEl = document.getElementById('logCount');
+  
+  let filtered = allEntries;
+  
+  // Search filter
+  if (searchQuery) {
+    filtered = filtered.filter(e => 
+      String(e.data || '').toLowerCase().includes(searchQuery) ||
+      String(e.type || '').toLowerCase().includes(searchQuery) ||
+      String(e.language || '').toLowerCase().includes(searchQuery) ||
+      String(e.voice_model || '').toLowerCase().includes(searchQuery) ||
+      String(e.mode || '').toLowerCase().includes(searchQuery) ||
+      String(e.method || '').toLowerCase().includes(searchQuery)
+    );
+  }
+  
+  countEl.textContent = filtered.length + ' / ' + allEntries.length;
+  document.getElementById('tabCountTimeline').textContent = allEntries.length;
+  
+  if (filtered.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="icon">🔍</div><div>Sin resultados' + 
+      (searchQuery ? ' para "' + escapeHtml(searchQuery) + '"' : '') + '</div></div>';
+    return;
+  }
+  
+  // Show last 500 max (performance)
+  const show = filtered.slice(-500);
+  
+  container.innerHTML = show.map(e => {
+    const ts = e.timestamp_ms || e.timestamp || '--:--:--';
+    const lang = e.language || detectLangFromText(String(e.data || ''));
+    const langT = langTag(lang);
+    
+    let dataStr = String(e.data || '');
+    // Highlight search terms
+    if (searchQuery && dataStr) {
+      const idx = dataStr.toLowerCase().indexOf(searchQuery);
+      if (idx >= 0) {
+        const before = dataStr.substring(0, idx);
+        const match = dataStr.substring(idx, idx + searchQuery.length);
+        const after = dataStr.substring(idx + searchQuery.length);
+        dataStr = escapeHtml(before) + '<span class="hl">' + escapeHtml(match) + '</span>' + escapeHtml(after);
+      } else {
+        dataStr = escapeHtml(dataStr);
+      }
+    } else {
+      dataStr = escapeHtml(dataStr);
+    }
+    
+    // Restrict display length
+    if (dataStr.length > 300) dataStr = dataStr.substring(0, 300) + '...';
+    
+    // Meta tags
+    const metaTags = [];
+    if (e.mode) metaTags.push(`<span class="meta-tag">${escapeHtml(e.mode)}</span>`);
+    if (lang) metaTags.push(langT);
+    if (e.voice_model) metaTags.push(`<span class="meta-tag">${escapeHtml(e.voice_model.replace('.onnx',''))}</span>`);
+    if (e.duration_ms) metaTags.push(`<span class="meta-tag" style="color:var(--cyan)">${e.duration_ms}ms</span>`);
+    if (e.token_count) metaTags.push(`<span class="meta-tag" style="color:var(--green)">${e.token_count} tok</span>`);
+    if (e.char_count) metaTags.push(`<span class="meta-tag">${e.char_count} chr</span>`);
+    if (e.method) metaTags.push(`<span class="meta-tag" style="font-size:6px">${escapeHtml(e.method)}</span>`);
+    
+    return `<div class="entry">
+      <span class="time">${escapeHtml(ts)}</span>
+      <span class="badge ${badgeClass(e.type)}">${e.type}</span>
+      <span class="data">${dataStr}</span>
+      <span class="meta">${metaTags.join('')}</span>
+    </div>`;
+  }).join('');
+}
+
+// ── ANALYTICS RENDERING ─────────────────────────────
+async function renderAnalytics() {
+  try {
+    const r = await fetch(LOGS_STATS_URL);
+    if (!r.ok) throw Error('HTTP ' + r.status);
+    const s = await r.json();
+    
+    document.getElementById('totalEvents').textContent = s.total || 0;
+    document.getElementById('ttsAvgMs').textContent = (s.tts_avg_ms || 0) + 'ms';
+    document.getElementById('ttsCountLabel').textContent = s.tts_count + ' generaciones';
+    document.getElementById('chatAvgMs').textContent = (s.chat_avg_ms || 0) + 'ms';
+    document.getElementById('chatCountLabel').textContent = s.chat_count + ' respuestas';
+    document.getElementById('errorCount').textContent = s.errors || 0;
+    
+    // Type breakdown
+    const typeB = document.getElementById('typeBreakdown');
+    const types = s.by_type || {};
+    const typeMax = Math.max(...Object.values(types), 1);
+    typeB.innerHTML = Object.entries(types).sort((a,b) => b[1] - a[1]).slice(0, 15).map(([t, c]) => 
+      `<div class="type-row">
+        <span class="label">${t}</span>
+        <div class="bar"><div class="fill" style="width:${(c/typeMax*100).toFixed(1)}%;background:${typeColor(t)}"></div></div>
+        <span class="val">${c}</span>
+      </div>`
+    ).join('') || '<div style="font-size:10px;color:var(--textMuted)">Sin datos</div>';
+    
+    // Language breakdown
+    const langB = document.getElementById('langBreakdown');
+    const langs = s.by_language || {};
+    const langTotal = Object.values(langs).reduce((a,b) => a + b, 0) || 1;
+    const langFlags = {es:'🇪🇸', en:'🇺🇸', ja:'🇯🇵'};
+    const langColors = {es:'var(--yellow)', en:'var(--cyan)', ja:'var(--red)'};
+    langB.innerHTML = Object.entries(langs).sort((a,b) => b[1] - a[1]).map(([l, c]) =>
+      `<div class="lang-row">
+        <span class="flag">${langFlags[l] || '🌐'}</span>
+        <span style="min-width:50px;font-size:10px">${l.toUpperCase()}</span>
+        <div class="bar"><div class="fill" style="width:${(c/langTotal*100).toFixed(1)}%;background:${langColors[l] || 'var(--accent)'}"></div></div>
+        <span class="pct">${(c/langTotal*100).toFixed(0)}%</span>
+      </div>`
+    ).join('') || '<div style="font-size:10px;color:var(--textMuted)">Sin datos</div>';
+    
+    // Latency breakdown
+    document.getElementById('latencyBreakdown').innerHTML = `
+      <div class="latency-row"><span class="lbl">✅ TTS éxito</span><span class="val good">${s.tts_count || 0}</span></div>
+      <div class="latency-row"><span class="lbl">⏱️ TTS promedio</span><span class="val ${s.tts_avg_ms > 1000 ? 'bad' : s.tts_avg_ms > 500 ? 'ok' : 'good'}">${s.tts_avg_ms || 0}ms</span></div>
+      <div class="latency-row"><span class="lbl">✅ Chat éxito</span><span class="val good">${s.chat_count || 0}</span></div>
+      <div class="latency-row"><span class="lbl">⏱️ Chat promedio</span><span class="val ${s.chat_avg_ms > 10000 ? 'bad' : s.chat_avg_ms > 5000 ? 'ok' : 'good'}">${s.chat_avg_ms || 0}ms</span></div>
+      <div class="latency-row"><span class="lbl">❌ Errores total</span><span class="val bad">${s.errors || 0}</span></div>
+    `;
+  } catch (e) {
+    console.warn('Analytics error:', e);
+  }
+}
+
+function typeColor(t) {
+  const c = {
+    'input': '#34d399', 'output': '#22d3ee', 'tts': '#b44aff',
+    'tts_start': '#b44aff', 'tts_play': '#e040ff', 'tts_error': '#ef4444',
+    'error': '#ef4444', 'lang_detect': '#fbbf24',
+    'segmentation': '#34d399', 'mode_change': '#fbbf24',
+    'asr': '#22d3ee', 'asr_error': '#ef4444'
+  };
+  return c[t] || '#6a4d99';
+}
+
+// ── HARDWARE RENDERING ──────────────────────────────
+async function fetchHardwareDetail() {
+  try {
+    const r = await fetch(STATS_FULL_URL);
+    if (!r.ok) throw Error('HTTP ' + r.status);
+    const h = await r.json();
+    
+    document.getElementById('gpuName').textContent = h.gpu?.name || '—';
+    document.getElementById('gpuDriver').textContent = h.gpu?.driver_version || '—';
+    
+    const vramPct = h.vram?.percent || 0;
+    document.getElementById('vramBar').style.width = vramPct + '%';
+    document.getElementById('vramBar').className = 'fill ' + (vramPct > 90 ? 'fill-red' : vramPct > 70 ? 'fill-orange' : 'fill-purple');
+    document.getElementById('vramVal').textContent = (h.vram?.used_mb || '—') + ' / ' + (h.vram?.total_mb || '—') + ' MB';
+    
+    document.getElementById('ramBar').style.width = Math.min(h.ram?.percent || 0, 100) + '%';
+    document.getElementById('ramVal').textContent = (h.ram?.used_gb || '—') + ' / ' + (h.ram?.total_gb || '—') + ' GB';
+    
+    document.getElementById('gpuBar').style.width = Math.min(h.gpu?.utilization_gpu || 0, 100) + '%';
+    document.getElementById('gpuUtilVal').textContent = (h.gpu?.utilization_gpu || 0) + '%';
+    
+    document.getElementById('cpuBar').style.width = Math.min(h.cpu?.percent || 0, 100) + '%';
+    document.getElementById('cpuVal').textContent = (h.cpu?.percent || 0) + '%';
+    document.getElementById('cpuCoresPhys').textContent = h.cpu?.cores_physical || '—';
+    document.getElementById('cpuCoresLog').textContent = h.cpu?.cores_logical || '—';
+    
+    const temp = h.gpu?.temperature || 0;
+    document.getElementById('tempVal').textContent = temp ? temp + '°C' : '—°C';
+    document.getElementById('tempBar').style.width = Math.min((temp / 100) * 100, 100) + '%';
+    
+    // Get live stats for TPS
+    const s = await (await fetch(STATS_URL)).json();
+    const tps = s.tokens_per_sec || 0;
+    document.getElementById('tpsVal').textContent = tps.toFixed(1) + ' tok/s';
+    document.getElementById('tpsBar').style.width = Math.min((tps / 30) * 100, 100) + '%';
+    
+    // Update TPS history
+    tpsHistoryData.push(tps);
+    tpsHistoryData.shift();
+    const maxTps = Math.max(...tpsHistoryData, 1);
+    const barsContainer = document.getElementById('tpsBars');
+    barsContainer.innerHTML = tpsHistoryData.map(v => {
+      const pct = (v / maxTps) * 100;
+      return `<div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:1px">
+        <div style="height:${pct}%;background:${v > 10 ? 'var(--green)' : v > 5 ? 'var(--yellow)' : 'var(--accent)'};border-radius:2px 2px 0 0;min-height:${v > 0 ? 2 : 0}px;width:100%"></div>
+      </div>`;
+    }).join('');
+    
+    // LLM status
+    const connected = h.llama?.connected;
+    document.getElementById('llamaConnected').innerHTML = connected 
+      ? '<span class="dot dot-green" style="display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:4px"></span> Conectado'
+      : '<span class="dot dot-red" style="display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:4px"></span> Desconectado';
+    document.getElementById('llamaSlots').textContent = h.llama?.slots || 0;
+    document.getElementById('llamaCtx').textContent = (s.context_used || 0) + ' / ' + (s.context_max || 4096);
+    document.getElementById('ctxBar').style.width = Math.min(s.context_percent || 0, 100) + '%';
+    document.getElementById('ctxPct').textContent = (s.context_percent || 0) + '%';
+    
+  } catch (e) {
+    console.warn('Hardware error:', e);
+  }
+}
+
+// ── TTS TAB ─────────────────────────────────────────
+function renderTtsTab() {
+  const ttsEntries = allEntries.filter(e => e.type === 'tts' || e.type === 'tts_error' || e.type === 'tts_start' || e.type === 'tts_play');
+  
+  document.getElementById('ttsTotal').textContent = ttsEntries.length;
+  
+  // Average latency
+  const withMs = ttsEntries.filter(e => e.duration_ms);
+  const avg = withMs.length > 0 ? withMs.reduce((a, e) => a + e.duration_ms, 0) / withMs.length : 0;
+  document.getElementById('ttsAvgLatency').textContent = Math.round(avg) + 'ms';
+  document.getElementById('ttsAvgDetail').textContent = withMs.length + ' con métrica';
+  
+  // Voice distribution
+  const voices = {};
+  ttsEntries.forEach(e => {
+    const v = e.voice_model || 'unknown';
+    voices[v] = (voices[v] || 0) + 1;
+  });
+  const voiceTotal = Object.values(voices).reduce((a,b)=>a+b,0) || 1;
+  document.getElementById('voiceBreakdown').innerHTML = Object.entries(voices).sort((a,b)=>b[1]-a[1]).map(([v,c]) =>
+    `<div class="lang-row">
+      <span style="font-size:10px;min-width:60px">${v.replace('.onnx','').replace('_',' ')}</span>
+      <div class="bar"><div class="fill fill-purple" style="width:${(c/voiceTotal*100).toFixed(1)}%"></div></div>
+      <span class="pct">${c}</span>
+    </div>`
+  ).join('') || '<div style="font-size:10px;color:var(--textMuted)">Sin datos</div>';
+  
+  // Method distribution
+  const methods = {};
+  ttsEntries.filter(e => e.method).forEach(e => {
+    methods[e.method] = (methods[e.method] || 0) + 1;
+  });
+  const methodTotal = Object.values(methods).reduce((a,b)=>a+b,0) || 1;
+  document.getElementById('methodBreakdown').innerHTML = Object.entries(methods).sort((a,b)=>b[1]-a[1]).map(([m,c]) =>
+    `<div class="lang-row">
+      <span style="font-size:10px;min-width:60px">${m}</span>
+      <div class="bar"><div class="fill fill-green" style="width:${(c/methodTotal*100).toFixed(1)}%"></div></div>
+      <span class="pct">${c}</span>
+    </div>`
+  ).join('') || '<div style="font-size:10px;color:var(--textMuted)">Sin datos de método</div>';
+  
+  // History list
+  const historyEl = document.getElementById('ttsHistoryList');
+  const show = ttsEntries.slice(-50).reverse();
+  if (show.length === 0) {
+    historyEl.innerHTML = '<div class="empty-state" style="height:60px"><div class="icon">🎤</div><div>Sin actividad TTS aún</div></div>';
+    return;
+  }
+  historyEl.innerHTML = show.map(e => {
+    const ts = e.timestamp || '--:--:--';
+    const lang = e.language || '';
+    const status = e.type === 'tts_error' ? '❌' : '✅';
+    const ms = e.duration_ms ? e.duration_ms + 'ms' : '';
+    const chars = e.char_count ? e.char_count + 'chr' : '';
+    const voice = (e.voice_model || '').replace('.onnx','').replace('_',' ');
+    const method = e.method || '';
+    return `<div class="tts-row">
+      <span class="tts-time">${ts}</span>
+      <span class="tts-lang tag-${lang||'en'}">${(lang||'?').toUpperCase()}</span>
+      <span class="tts-voice">${voice}</span>
+      <span class="tts-ms" style="color:${e.duration_ms && e.duration_ms > 1000 ? 'var(--yellow)' : 'var(--green)'}">${ms}</span>
+      <span class="tts-chars">${chars}</span>
+      <span class="tts-method">${method}</span>
+      <span class="tts-status">${status}</span>
+    </div>`;
+  }).join('');
+}
+
+// ── POLL LOGS ──────────────────────────────────────
+async function fetchLogs() {
+  try {
+    const r = await fetch(LOGS_URL);
+    if (!r.ok) throw Error('HTTP ' + r.status);
+    allEntries = await r.json();
+    
+    const wasEmpty = document.getElementById('logContainer').querySelector('.empty-state');
+    
+    if (currentTab === 'timeline') renderTimeline();
+    if (currentTab === 'tts') renderTtsTab();
+    
+    // Update header status
+    document.getElementById('headerDot').className = 'dot dot-green';
+    document.getElementById('headerStatus').textContent = 'En vivo · ' + allEntries.length + ' eventos';
+    
+  } catch (e) {
+    document.getElementById('headerDot').className = 'dot dot-red';
+    document.getElementById('headerStatus').textContent = 'Desconectado';
+  }
+}
+
+// ── POLL STATS ─────────────────────────────────────
+async function fetchBasicStats() {
+  try {
+    const r = await fetch(STATS_URL);
+    if (!r.ok) throw Error('HTTP ' + r.status);
+    const s = await r.json();
+    
+    // Update header status indicator based on llama connection
+    if (s.llama_connected) {
+      document.getElementById('headerDot').className = 'dot dot-green';
+      document.getElementById('headerStatus').textContent = 'En vivo · ' + (allEntries.length || 0) + ' eventos';
+    }
+    
+    // Update TPS history in background for hardware tab
+    if (s.tokens_per_sec) {
+      tpsHistoryData.push(s.tokens_per_sec);
+      tpsHistoryData.shift();
+    }
+    
+  } catch (e) {}
+}
+
+// ── ACTIONS ────────────────────────────────────────
+async function clearLogs() {
+  try {
+    await fetch('http://localhost:3000/api/logs/clear');
+    allEntries = [];
+    if (currentTab === 'timeline') renderTimeline();
+    if (currentTab === 'tts') renderTtsTab();
+  } catch (e) {}
+}
+
+function exportLogs() {
+  window.open('http://localhost:3000/api/logs/export', '_blank');
+}
+
+// ── INIT & POLL CYCLE ──────────────────────────────
+function pollCycle() {
+  fetchLogs();
+  fetchBasicStats();
+  if (currentTab === 'hardware') fetchHardwareDetail();
+  if (currentTab === 'analytics') renderAnalytics();
+}
+
+setInterval(pollCycle, 2000);
+pollCycle();
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+  if (e.key === '1') switchTab('timeline');
+  if (e.key === '2') switchTab('analytics');
+  if (e.key === '3') switchTab('hardware');
+  if (e.key === '4') switchTab('tts');
+  if (e.key === 'l' && e.ctrlKey) { e.preventDefault(); clearLogs(); }
+  if (e.key === '/' && !e.ctrlKey && !e.metaKey) {
+    const el = document.getElementById('searchInput');
+    if (document.activeElement !== el) { e.preventDefault(); el.focus(); }
+  }
+});
+</script>
+</body>
+</html>

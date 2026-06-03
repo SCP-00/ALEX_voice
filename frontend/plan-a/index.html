@@ -2,75 +2,2106 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Plan A — Alex Voice (Combined GPU)</title>
+<title>Plan A — Alex Voice (3 Modos)</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Syne:wght@400;700;800&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#0a0015;--surface:#120026;--surface2:#1e0040;--border:#3a0077;--text:#e8d0ff;--textDim:#9a7fbf;--accent:#b44aff;--accent2:#7c3aed;--glow:rgba(180,74,255,.3)}
+:root{--bg:#0a0015;--surface:#120026;--surface2:#1e0040;--surface3:#2c0060;--border:#3a0077;--border2:#4b0099;--text:#e8d0ff;--textDim:#9a7fbf;--textMuted:#6b5099;--accent:#b44aff;--accent2:#7c3aed;--accent3:#e040ff;--glow:rgba(180,74,255,.3);--green:#34d399;--yellow:#fbbf24;--red:#ef4444;--orange:#fb923c;--cyan:#22d3ee}
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'Space Grotesk',sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;overflow:hidden}
-.sidebar{width:260px;background:var(--surface);border-right:1px solid var(--border);padding:24px 16px;display:flex;flex-direction:column;flex-shrink:0}
-.logo{font-family:'Syne',sans-serif;font-size:22px;font-weight:800;margin-bottom:8px;background:linear-gradient(135deg,var(--accent),#e040ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.plan-badge{font-size:10px;text-transform:uppercase;letter-spacing:2px;color:var(--accent);margin-bottom:32px;padding:4px 10px;border:1px solid var(--accent);border-radius:20px;display:inline-block}
-.mode-group{display:flex;flex-direction:column;gap:6px;flex:1}
-.mode-btn{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:10px;border:1px solid transparent;cursor:pointer;background:transparent;color:var(--textDim);font-family:inherit;font-size:13px;font-weight:500;transition:all .3s;text-align:left}
-.mode-btn:hover{color:var(--text);background:var(--surface2)}
-.mode-btn.active{border-color:var(--accent);color:var(--text);background:var(--surface2);box-shadow:0 0 15px var(--glow)}
-.main{flex:1;display:flex;flex-direction:column}
-.header{padding:16px 28px;border-bottom:1px solid var(--border);background:var(--surface);display:flex;align-items:center;justify-content:space-between}
-.header h2{font-family:'Syne',sans-serif;font-size:16px}
-.vram-bar{padding:8px 16px;background:rgba(180,74,255,.1);border:1px solid var(--border);border-radius:8px;font-size:11px;display:flex;align-items:center;gap:12px;margin-bottom:16px}
-.vram-bar .bar{flex:1;height:6px;background:var(--surface2);border-radius:3px;overflow:hidden}
-.vram-bar .fill{height:100%;background:linear-gradient(90deg,var(--accent),#e040ff);border-radius:3px;width:67%}
-.messages{flex:1;overflow-y:auto;padding:20px 28px;display:flex;flex-direction:column;gap:12px}
-.msg{max-width:75%;padding:12px 16px;border-radius:14px;font-size:13px;line-height:1.6;animation:fadeIn .3s}
+
+/* ── Sidebar ──────────────────────────── */
+.sidebar{width:280px;background:var(--surface);border-right:1px solid var(--border);padding:20px 14px;display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto;gap:14px}
+.sidebar::-webkit-scrollbar{width:3px}
+.sidebar::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+.logo{font-family:'Syne',sans-serif;font-size:22px;font-weight:800;background:linear-gradient(135deg,var(--accent),var(--accent3));-webkit-background-clip:text;-webkit-text-fill-color:transparent;display:flex;align-items:center;gap:8px}
+.logo-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);-webkit-text-fill-color:initial;display:inline-block;box-shadow:0 0 8px var(--glow)}
+.plan-badge{font-size:9px;text-transform:uppercase;letter-spacing:2px;color:var(--accent);padding:3px 10px;border:1px solid var(--accent);border-radius:20px;display:inline-block;width:fit-content}
+
+/* ── Mode Buttons ─────────────────────── */
+.mode-group{display:flex;flex-direction:column;gap:4px}
+.mode-btn{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;border:1px solid transparent;cursor:pointer;background:transparent;color:var(--textDim);font-family:inherit;font-size:12px;font-weight:500;transition:all .25s ease;text-align:left;width:100%}
+.mode-btn:hover{color:var(--text);background:var(--surface2);border-color:var(--border)}
+.mode-btn.active{border-color:var(--accent);color:var(--text);background:var(--surface2);box-shadow:0 0 12px var(--glow)}
+.mode-btn .mode-icon{font-size:16px}
+.mode-btn .mode-label{font-size:11px}
+.mode-btn .mode-desc{font-size:9px;color:var(--textMuted);margin-top:1px}
+
+/* ── Listening Section ────────────────── */
+.listen-section{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.listen-header{display:flex;align-items:center;justify-content:space-between;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--textDim)}
+.toggle-switch{position:relative;width:36px;height:20px;flex-shrink:0;cursor:pointer}
+.toggle-track{width:36px;height:20px;background:var(--surface3);border-radius:10px;transition:background .3s;border:1px solid var(--border)}
+.toggle-track.active{background:var(--accent2);border-color:var(--accent)}
+.toggle-knob{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--text);transition:transform .3s;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.toggle-switch.active .toggle-knob{transform:translateX(16px);background:#fff}
+.listen-status{font-size:11px;display:flex;align-items:center;gap:6px}
+.listen-indicator{width:6px;height:6px;border-radius:50%;display:inline-block}
+.listen-indicator.idle{background:var(--textMuted)}
+.listen-indicator.listening{background:var(--green);animation:pulse 1s infinite}
+.listen-indicator.speaking{background:var(--accent);animation:pulse .5s infinite}
+.listen-transcript{font-size:10px;color:var(--textMuted);min-height:16px;padding:4px 6px;background:rgba(0,0,0,.2);border-radius:4px;word-break:break-word}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* ── Monitor Panel ────────────────────── */
+.monitor-panel{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:10px}
+.monitor-header{display:flex;align-items:center;justify-content:space-between;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--textDim)}
+.live-dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 2s infinite;display:inline-block}
+.stat-row{display:flex;align-items:center;gap:8px;font-size:11px}
+.stat-row .stat-icon{width:18px;text-align:center;font-size:13px;flex-shrink:0}
+.stat-row .stat-label{color:var(--textDim);font-size:10px;min-width:44px;flex-shrink:0}
+.stat-row .stat-value{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:500;min-width:60px;text-align:right;flex-shrink:0;color:var(--text)}
+.stat-row .stat-value.green{color:var(--green)}
+.stat-row .stat-value.yellow{color:var(--yellow)}
+.stat-row .stat-value.orange{color:var(--orange)}
+.stat-row .stat-value.red{color:var(--red)}
+.stat-row .stat-value.cyan{color:var(--cyan)}
+.bar-wrap{flex:1;height:5px;background:var(--surface3);border-radius:3px;overflow:hidden;min-width:60px}
+.bar-fill{height:100%;border-radius:3px;transition:width .1s linear;min-width:0}
+.bar-fill.purple{background:linear-gradient(90deg,var(--accent2),var(--accent))}
+.bar-fill.green{background:linear-gradient(90deg,#059669,var(--green))}
+.bar-fill.blue{background:linear-gradient(90deg,#2563eb,var(--cyan))}
+.bar-fill.yellow{background:linear-gradient(90deg,#d97706,var(--yellow))}
+.bar-fill.orange{background:linear-gradient(90deg,#ea580c,var(--orange))}
+.red{color:var(--red)}.green{color:var(--green)}.orange{color:var(--orange)}.yellow{color:var(--yellow)}
+.context-section{background:var(--surface3);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:6px}
+.context-header{display:flex;justify-content:space-between;font-size:10px;color:var(--textDim)}
+.context-bar{height:8px;background:rgba(0,0,0,.3);border-radius:4px;overflow:hidden;position:relative}
+.context-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--accent2),var(--accent),var(--accent3));transition:width .1s linear}
+
+/* ── Loading Section ──────────────────── */
+.loading-section{background:var(--surface3);border:1px solid var(--accent2);border-radius:8px;padding:8px 12px;display:none;flex-direction:column;gap:5px}
+.loading-section.show{display:flex}
+.loading-header{display:flex;justify-content:space-between;align-items:center;font-size:10px;color:var(--textDim)}
+.loading-header .status-icon{font-size:12px}
+.loading-bar-wrap{height:6px;background:rgba(0,0,0,.3);border-radius:3px;overflow:hidden}
+.loading-fill{height:100%;border-radius:3px;transition:width .1s linear;min-width:0}
+.loading-fill.waiting{background:var(--textMuted)}
+.loading-fill.loading{background:linear-gradient(90deg,var(--accent2),var(--accent))}
+.loading-fill.done{background:var(--green);width:100% !important}
+.loading-detail{font-size:9px;color:var(--textMuted);display:flex;justify-content:space-between;align-items:center;gap:4px}
+.loading-detail .vram-info{font-family:'JetBrains Mono',monospace;color:var(--accent);font-size:9px;white-space:nowrap}
+.loading-detail .vram-delta{font-family:'JetBrains Mono',monospace;font-size:8px;white-space:nowrap}
+.monitor-divider{height:1px;background:linear-gradient(90deg,transparent,var(--border),transparent);margin:2px 0}
+.status-row{display:flex;align-items:center;gap:6px;font-size:10px;padding:4px 0}
+.status-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.status-dot.idle{background:var(--textMuted)}
+.status-dot.processing{background:var(--green);animation:pulse 1s infinite}
+.status-dot.disconnected{background:var(--red)}
+.gpu-temp-bar{display:flex;align-items:center;gap:6px;font-size:11px}
+.listen-lang-select{padding:3px 6px;border-radius:4px;border:1px solid var(--border);background:var(--surface3);color:var(--text);font-size:10px;font-family:inherit;outline:none;width:100%}
+
+/* ── Main Layout ──────────────────────── */
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.header{padding:10px 20px;border-bottom:1px solid var(--border);background:var(--surface);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.header h2{font-family:'Syne',sans-serif;font-size:14px;font-weight:700;display:flex;align-items:center;gap:6px;flex-shrink:0}
+.header-right{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--textDim);margin-left:auto}
+.header-right .badge{display:flex;align-items:center;gap:4px;padding:3px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;font-size:10px}
+.tts-controls{display:flex;align-items:center;gap:6px;padding:3px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;font-size:10px}
+.tts-controls .tts-status{display:flex;align-items:center;gap:3px}
+.tts-btn{width:24px;height:24px;border-radius:6px;border:1px solid var(--border);cursor:pointer;background:var(--surface3);color:var(--textDim);font-size:12px;display:flex;align-items:center;justify-content:center;transition:all .2s}
+.tts-btn:hover{background:var(--accent2);color:#fff;border-color:var(--accent)}
+.tts-btn:disabled{opacity:.3;cursor:not-allowed}
+.tts-btn.active{background:var(--accent2);color:#fff;border-color:var(--accent)}
+.tts-progress{width:40px;height:3px;background:var(--surface3);border-radius:2px;overflow:hidden;flex-shrink:0}
+.tts-progress-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent3));border-radius:2px;transition:width .3s;width:0%}
+.messages-area{flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:10px}
+.messages-area::-webkit-scrollbar{width:4px}
+.messages-area::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+
+/* ── Shared Messages ──────────────────── */
+.msg{max-width:85%;padding:12px 16px;border-radius:14px;font-size:13px;line-height:1.6;animation:fadeIn .3s ease}
 @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 .msg.user{align-self:flex-end;background:linear-gradient(135deg,var(--accent2),var(--accent));color:#fff;border-bottom-right-radius:4px}
-.msg.assistant{align-self:flex-start;background:var(--surface2);border:1px solid var(--border);border-bottom-left-radius:4px}
-.msg .ts{font-size:10px;color:var(--textDim);margin-top:4px;opacity:.5}
-.think-indicator{align-self:flex-start;display:none;gap:4px;padding:12px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:14px}
+.msg .ts{font-size:10px;color:var(--textDim);margin-top:4px;opacity:.5;font-family:'JetBrains Mono',monospace}
+.think-indicator{align-self:flex-start;display:none;gap:4px;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:14px}
 .think-indicator.show{display:flex}
 .think-indicator span{width:5px;height:5px;border-radius:50%;background:var(--accent);animation:bounce 1.4s infinite}
 .think-indicator span:nth-child(2){animation-delay:.2s}
 .think-indicator span:nth-child(3){animation-delay:.4s}
 @keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-5px)}}
-.input-area{padding:16px 28px;border-top:1px solid var(--border);background:var(--surface)}
-.input-row{display:flex;gap:10px}
-textarea{flex:1;padding:12px 16px;border:1px solid var(--border);border-radius:12px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:13px;resize:none;outline:none;min-height:48px}
-textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--glow)}
-.send-btn{width:48px;height:48px;border-radius:12px;border:none;cursor:pointer;background:linear-gradient(135deg,var(--accent2),var(--accent));color:#fff;font-size:18px;transition:all .3s;flex-shrink:0}
-.send-btn:hover{box-shadow:0 0 20px var(--glow)}
-.send-btn:disabled{opacity:.3;cursor:not-allowed}
+
+/* ── TEACHER MODE OUTPUT ────────────────── */
+.teacher-output{background:var(--surface2);border:1px solid var(--border);border-radius:14px;padding:14px 18px;max-width:85%;align-self:flex-start;animation:fadeIn .3s ease}
+.teacher-line{padding:6px 0;border-bottom:1px solid rgba(58,0,119,.3);line-height:1.7}
+.teacher-line:last-child{border-bottom:none}
+.teacher-line .label{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--textMuted);margin-bottom:2px}
+.teacher-line.native .text{font-size:16px;color:var(--text);font-weight:600}
+.teacher-line.romanji .text{font-size:14px;color:var(--accent);font-style:italic}
+.teacher-line.translation .text{font-size:13px;color:var(--cyan)}
+.teacher-level{display:flex;align-items:center;gap:6px;margin-top:8px;padding:5px 10px;background:var(--surface3);border-radius:6px;font-size:9px;color:var(--textDim)}
+.teacher-level .stars{color:var(--yellow)}
+.teacher-speed{font-size:9px;color:var(--textMuted);margin-left:auto}
+
+/* ── CONVERSATIONAL MODE ────────────────── */
+.topic-bar{display:flex;gap:6px;padding:8px 20px;border-bottom:1px solid var(--border);background:var(--surface);overflow-x:auto;flex-wrap:nowrap;align-items:center}
+.topic-bar::-webkit-scrollbar{height:2px}
+.topic-bar::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.topic-label{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--textMuted);flex-shrink:0;margin-right:4px}
+.topic-chip{padding:4px 12px;border-radius:14px;border:1px solid var(--border);background:var(--surface2);color:var(--textDim);font-size:10px;cursor:pointer;white-space:nowrap;transition:all .2s;flex-shrink:0;font-family:inherit}
+.topic-chip:hover{border-color:var(--accent);color:var(--text);background:var(--surface3)}
+.topic-chip.active{background:var(--accent2);color:#fff;border-color:var(--accent);box-shadow:0 0 8px var(--glow)}
+.conv-msg{max-width:80%;padding:12px 16px;border-radius:14px;font-size:13px;line-height:1.6;animation:fadeIn .3s ease}
+.conv-msg.user{align-self:flex-end;background:linear-gradient(135deg,var(--accent2),var(--accent));color:#fff;border-bottom-right-radius:4px}
+.conv-msg.assistant{align-self:flex-start;background:var(--surface2);border:1px solid var(--border);border-bottom-left-radius:4px}
+.conv-msg .ts{font-size:10px;color:var(--textDim);margin-top:4px;opacity:.5;font-family:'JetBrains Mono',monospace}
+
+/* ── TRANSLATOR MODE ───────────────────── */
+.translator-layout{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.translator-controls{display:flex;align-items:center;gap:8px;padding:8px 20px;border-bottom:1px solid var(--border);background:var(--surface);flex-wrap:wrap}
+.translator-lang-pair{display:flex;align-items:center;gap:6px}
+.translator-lang-pair select{padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:11px;font-family:inherit;outline:none}
+.translator-lang-pair .arrow{color:var(--accent);font-size:16px}
+.translator-split-toggle{display:flex;gap:2px;margin-left:auto}
+.translator-split-toggle button{padding:4px 10px;border:1px solid var(--border);background:var(--surface2);color:var(--textDim);font-size:10px;cursor:pointer;font-family:inherit;transition:all .2s}
+.translator-split-toggle button:first-child{border-radius:6px 0 0 6px}
+.translator-split-toggle button:last-child{border-radius:0 6px 6px 0}
+.translator-split-toggle button.active{background:var(--accent2);color:#fff;border-color:var(--accent)}
+.translator-panels{flex:1;display:flex;overflow:hidden}
+.translator-panel{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.translator-panel:first-child{border-right:1px solid var(--border)}
+.translator-panel-header{padding:8px 14px;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--textDim);background:var(--surface2);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px}
+.translator-panel-header .lang-flag{font-size:14px}
+.translator-panel-messages{flex:1;overflow-y:auto;padding:10px 14px;display:flex;flex-direction:column;gap:8px}
+.translator-panel-messages::-webkit-scrollbar{width:3px}
+.translator-panel-messages::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.translator-msg{padding:8px 12px;border-radius:8px;font-size:12px;line-height:1.5;animation:fadeIn .2s ease;max-width:100%}
+.translator-msg.lang1{background:var(--surface3);border:1px solid var(--border);align-self:flex-start}
+.translator-msg.lang2{background:rgba(52,211,153,.1);border:1px solid rgba(52,211,153,.3);align-self:flex-end;color:var(--green)}
+.translator-msg .ts{font-size:8px;color:var(--textMuted);margin-top:2px;opacity:.5;font-family:'JetBrains Mono',monospace}
+.translator-panels.vertical{flex-direction:column}
+.translator-panels.vertical .translator-panel:first-child{border-right:none;border-bottom:1px solid var(--border)}
+.translator-msg.lang1.single{align-self:flex-start;background:var(--surface3);border:1px solid var(--border)}
+.translator-msg.lang2.single{align-self:flex-end;background:rgba(52,211,153,.1);border:1px solid rgba(52,211,153,.3);color:var(--green)}
+
+/* ── Input Area ───────────────────────── */
+.input-area{padding:10px 20px;border-top:1px solid var(--border);background:var(--surface)}
+.input-row{display:flex;gap:8px}
+.input-row textarea{flex:1;padding:10px 14px;border:1px solid var(--border);border-radius:10px;background:var(--surface2);color:var(--text);font-family:'Space Grotesk',sans-serif;font-size:13px;resize:none;outline:none;min-height:44px;transition:border-color .2s,box-shadow .2s}
+.input-row textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--glow)}
+.input-row textarea::placeholder{color:var(--textMuted)}
+.input-row .send-btn{width:44px;height:44px;border-radius:10px;border:none;cursor:pointer;background:linear-gradient(135deg,var(--accent2),var(--accent));color:#fff;font-size:18px;transition:all .25s ease;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+.input-row .send-btn:hover{box-shadow:0 0 18px var(--glow);transform:scale(1.03)}
+.input-row .send-btn:disabled{opacity:.3;cursor:not-allowed;transform:none;box-shadow:none}
+.listening-flash{position:fixed;top:0;left:0;right:0;bottom:0;pointer-events:none;border:3px solid transparent;transition:border-color .15s;z-index:100}
+.listening-flash.active{border-color:var(--green)}
+.listening-flash.speaking{border-color:var(--accent)}
 </style>
 </head>
 <body>
+
+<div class="listening-flash" id="listeningFlash"></div>
+
+<!── SIDEBAR ──────────────────────────────── -->
 <div class="sidebar">
-  <div class="logo">AlexVoice</div>
-  <div class="plan-badge">Plan A · GPU Combined</div>
-  <div class="mode-group" id="modeGroup">
-    <button class="mode-btn active" data-mode="teacher" onclick="setMode('teacher')"><div><strong>🎓 Teacher</strong><br><span style="font-size:10px;color:var(--textDim)">Explicaciones</span></div></button>
-    <button class="mode-btn" data-mode="conversation" onclick="setMode('conversation')"><div><strong>💬 Conversación</strong><br><span style="font-size:10px;color:var(--textDim)">Charla natural</span></div></button>
-    <button class="mode-btn" data-mode="translator" onclick="setMode('translator')"><div><strong>🌍 Traductor</strong><br><span style="font-size:10px;color:var(--textDim)">ES/EN/JA</span></div></button>
+  <div style="display:flex;align-items:center;justify-content:space-between">
+    <div class="logo"><span class="logo-dot"></span>AlexVoice</div>
+    <div class="plan-badge">Plan A · GPU</div>
   </div>
-  <div class="vram-bar">💾 <div class="bar"><div class="fill"></div></div> 3.5/5.3 GB</div>
+
+  <!── Modes ──>
+  <div class="mode-group">
+    <button class="mode-btn active" data-mode="teacher" onclick="setMode('teacher')">
+      <span class="mode-icon">🎓</span>
+      <div><div class="mode-label">Teacher</div><div class="mode-desc">Native + romanji + traducción</div></div>
+    </button>
+    <button class="mode-btn" data-mode="conversation" onclick="setMode('conversation')">
+      <span class="mode-icon">💬</span>
+      <div><div class="mode-label">Conversación</div><div class="mode-desc">Temas · charla bilingüe natural</div></div>
+    </button>
+    <button class="mode-btn" data-mode="translator" onclick="setMode('translator')">
+      <span class="mode-icon">🌍</span>
+      <div><div class="mode-label">Traductor</div><div class="mode-desc">ES/EN/JA · pantalla dividida</div></div>
+    </button>
+  </div>
+
+  <!── Active Listening ──>
+  <div class="listen-section">
+    <div class="listen-header">
+      <span>🎤 Escucha Activa</span>
+      <div class="toggle-switch" id="listenToggle" onclick="toggleListening()">
+        <div class="toggle-track" id="listenTrack"></div>
+        <div class="toggle-knob" id="listenKnob"></div>
+      </div>
+    </div>
+    <div class="listen-status">
+      <span class="listen-indicator idle" id="listenIndicator"></span>
+      <span id="listenStatusText">Desactivado</span>
+    </div>
+    <div style="display:flex;gap:4px">
+      <select class="listen-lang-select" id="listenLang" onchange="changeListenLang()" style="flex:1">
+        <option value="es-ES">🇪🇸 Español</option>
+        <option value="en-US">🇺🇸 English</option>
+        <option value="ja-JP">🇯🇵 日本語</option>
+      </select>
+      <select id="asrMode" onchange="setAsrMode(this.value)" style="padding:3px 6px;border-radius:4px;border:1px solid var(--border);background:var(--surface3);color:var(--text);font-size:9px;font-family:inherit;outline:none;flex-shrink:0">
+        <option value="chrome">🗣️ Chrome ASR</option>
+        <option value="whisper">🤖 Whisper ASR</option>
+      </select>
+    </div>
+    <div class="listen-transcript" id="listenTranscript">—</div>
+  </div>
+
+  <!── Monitor ──>
+  <div class="monitor-panel">
+    <div class="monitor-header"><span>⚡ Monitor</span><span><span class="live-dot"></span> EN VIVO</span></div>
+    <div class="loading-section" id="loadingSection">
+      <div class="loading-header">
+        <span><span class="status-icon" id="loadingIcon">🚀</span> <span id="loadingTitle">Iniciando</span></span>
+        <span id="loadingStatus">—</span>
+      </div>
+      <div class="loading-bar-wrap"><div class="loading-fill animated" id="loadingFill" style="width:0%"></div></div>
+      <div class="loading-detail">
+        <span id="loadingDetail">Esperando al servidor...</span>
+        <span class="vram-info" id="loadingVram"></span>
+      </div>
+    </div>
+
+    <div class="context-section">
+      <div class="context-header"><span>🧠 Contexto</span><span id="ctxLabel">0 / 4,096</span></div>
+      <div class="context-bar"><div class="context-fill" id="ctxFill" style="width:0%"></div></div>
+      <div class="context-stats" style="display:flex;justify-content:space-between;font-size:9px;color:var(--textMuted)">
+        <span id="ctxPercent">0%</span>
+        <span id="ctxStatus">○ Inactivo</span>
+      </div>
+    </div>
+    <div class="monitor-divider"></div>
+    <div class="stat-row">
+      <span class="stat-icon">🎮</span><span class="stat-label">VRAM</span>
+      <div class="bar-wrap"><div class="bar-fill purple" id="vramFill" style="width:0%"></div></div>
+      <span class="stat-value" id="vramText">— MB</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-icon">💾</span><span class="stat-label">RAM</span>
+      <div class="bar-wrap"><div class="bar-fill blue" id="ramFill" style="width:0%"></div></div>
+      <span class="stat-value" id="ramText">— GB</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-icon">🔥</span><span class="stat-label">GPU</span>
+      <div class="bar-wrap"><div class="bar-fill orange" id="gpuFill" style="width:0%"></div></div>
+      <span class="stat-value" id="gpuText">—%</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-icon">⚙️</span><span class="stat-label">CPU</span>
+      <div class="bar-wrap"><div class="bar-fill yellow" id="cpuFill" style="width:0%"></div></div>
+      <span class="stat-value" id="cpuText">—%</span>
+    </div>
+    <div class="stat-row" style="justify-content:space-between">
+      <div class="gpu-temp-bar"><span>🌡️</span><span class="stat-value" id="tempText" style="font-size:11px">—°C</span></div>
+      <div class="gpu-temp-bar"><span>⚡</span><span class="stat-value cyan" id="tpsText" style="font-size:11px">0.0 tok/s</span></div>
+    </div>
+    <div class="monitor-divider"></div>
+    <div class="status-row">
+      <span class="status-dot idle" id="statusDot"></span>
+      <span id="statusText">Conectando...</span>
+      <span style="margin-left:auto;font-size:9px;color:var(--textMuted);font-family:'JetBrains Mono',monospace" id="pollTime"></span>
+    </div>
+  </div>
+
+  <a href="/debug" target="_blank" style="display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);color:var(--textDim);font-size:10px;text-decoration:none;transition:all .2s"
+     onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--text)'"
+     onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--textDim)'">
+    📊 Debug <span style="margin-left:auto;font-size:8px;color:var(--textMuted)">↗</span>
+  </a>
 </div>
+
+<!── MAIN ────────────────────────────────── -->
 <div class="main">
-  <div class="header"><h2 id="modeTitle">🎓 Plan A — LLM + TTS en GPU</h2><span style="font-size:11px;color:var(--textDim)" id="modeBadge">Teacher Mode</span></div>
-  <div class="messages" id="msgs"><div class="msg assistant">Plan A: Qwen3.5-2B-Q8 (21 tok/s) + OuteTTS-500M = ~3.5 GB VRAM.<div class="ts">Alex Voice · Plan A</div></div></div>
+  <div class="header">
+    <h2 id="modeTitle">🎓 Plan A — Teacher</h2>        <div class="tts-controls" id="ttsControls">
+          <span class="tts-status" id="ttsStatus">🔇 Silencio</span>
+          <div class="tts-progress"><div class="tts-progress-fill" id="ttsProgressFill"></div></div>
+          <button class="tts-btn" id="ttsPauseBtn" onclick="toggleTtsPause()" disabled title="Pausar">⏸️</button>
+          <button class="tts-btn" id="ttsStopBtn" onclick="stopTts()" disabled title="Detener">⏹️</button>
+          <select id="ttsModeSelect" onchange="setTtsMode(this.value)" style="padding:2px 4px;border-radius:4px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:9px;font-family:inherit;outline:none">
+            <option value="auto">🤖 Auto</option>
+            <option value="piper">⚡ Piper</option>
+            <option value="outetts">🎮 OuteTTS GPU</option>
+          </select>
+        </div>
+    <div class="header-right">
+      <span class="badge"><span class="live-dot"></span> <span id="headerTps">— tok/s</span></span>
+      <span class="badge" id="modeBadge">Teacher</span>
+    </div>
+  </div>
+
+  <!── TEACHER INTERFACE ────────────────── -->
+  <div id="teacherInterface" class="messages-area" style="display:flex">
+    <div class="teacher-output">
+      <div class="teacher-line native">
+        <div class="label">📖 Texto original</div>
+        <div class="text">¡Bienvenido al modo Teacher!</div>
+      </div>
+      <div class="teacher-line romanji">
+        <div class="label">🔤 Pronunciación</div>
+        <div class="text">Byehn-veh-nee-doh ahl moh-doh Tee-cher</div>
+      </div>
+      <div class="teacher-line translation">
+        <div class="label">🌍 Traducción</div>
+        <div class="text">Welcome to Teacher mode! 🎓</div>
+      </div>
+      <div class="teacher-level">
+        <span class="stars">★</span> Nivel: Principiante
+        <span class="teacher-speed">🐢 60-90 wpm · Vocabulario básico</span>
+      </div>
+    </div>
+  </div>
+
+  <!── CONVERSATIONAL INTERFACE ─────────── -->
+  <div id="conversationInterface" style="display:none;flex:1;flex-direction:column;overflow:hidden">
+    <div class="topic-bar" id="topicBar">
+      <span class="topic-label">🎯 Tema:</span>
+      <span class="topic-chip active" data-topic="random" onclick="selectTopic(this,'random')">🎲 Aleatorio</span>
+      <span class="topic-chip" data-topic="travel" onclick="selectTopic(this,'travel')">✈️ Viajes</span>
+      <span class="topic-chip" data-topic="technology" onclick="selectTopic(this,'technology')">💻 Tecnología</span>
+      <span class="topic-chip" data-topic="food" onclick="selectTopic(this,'food')">🍜 Comida</span>
+      <span class="topic-chip" data-topic="culture" onclick="selectTopic(this,'culture')">🎭 Cultura</span>
+      <span class="topic-chip" data-topic="music" onclick="selectTopic(this,'music')">🎵 Música</span>
+      <span class="topic-chip" data-topic="hobbies" onclick="selectTopic(this,'hobbies')">🎨 Pasatiempos</span>
+    </div>
+    <div class="messages-area" id="convMessages">
+      <div class="conv-msg assistant">
+        💬 ¡Modo Conversación! Elige un tema o selecciona "Aleatorio" para empezar a charlar.
+        <div class="ts">Alex Voice · Conversación</div>
+      </div>
+    </div>
+  </div>
+
+  <!── TRANSLATOR INTERFACE ─────────────── -->
+  <div id="translatorInterface" class="translator-layout" style="display:none">
+    <div class="translator-controls">
+      <div class="translator-lang-pair">
+        <select id="transLang1" onchange="updateTranslatorConfig()">
+          <option value="es">🇪🇸 Español</option>
+          <option value="en" selected>🇺🇸 English</option>
+          <option value="ja">🇯🇵 日本語</option>
+        </select>
+        <span class="arrow">⇄</span>
+        <select id="transLang2" onchange="updateTranslatorConfig()">
+          <option value="es">🇪🇸 Español</option>
+          <option value="en">🇺🇸 English</option>
+          <option value="ja" selected>🇯🇵 日本語</option>
+        </select>
+      </div>
+      <div class="translator-split-toggle">
+        <button class="active" data-split="horizontal" onclick="setTranslatorSplit('horizontal')">⇔ H</button>
+        <button data-split="vertical" onclick="setTranslatorSplit('vertical')">⇕ V</button>
+      </div>
+      <span style="font-size:9px;color:var(--textMuted);margin-left:4px" id="transLabel">EN → JA</span>
+    </div>
+    <div class="translator-panels" id="transPanels">
+      <div class="translator-panel" id="transPanel1">
+        <div class="translator-panel-header">
+          <span class="lang-flag" id="transFlag1">🇺🇸</span>
+          <span id="transLabel1">Inglés (Entrada)</span>
+        </div>
+        <div class="translator-panel-messages" id="transMsgs1">
+          <div class="translator-msg lang1">💬 Los mensajes aparecerán aquí en el idioma de entrada.</div>
+        </div>
+      </div>
+      <div class="translator-panel" id="transPanel2">
+        <div class="translator-panel-header">
+          <span class="lang-flag" id="transFlag2">🇯🇵</span>
+          <span id="transLabel2">Japonés (Salida)</span>
+        </div>
+        <div class="translator-panel-messages" id="transMsgs2">
+          <div class="translator-msg lang2">💬 Las traducciones aparecerán aquí.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!── Thinking indicator ──>
   <div class="think-indicator" id="think"><span></span><span></span><span></span></div>
+
+  <!── INPUT AREA ────────────────────────── -->
   <div class="input-area">
     <div class="input-row">
-      <textarea id="input" placeholder="Escribe..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
+      <textarea id="input" placeholder="Escribe o activa Escucha Activa..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
       <button class="send-btn" id="sendBtn" onclick="send()">➤</button>
     </div>
   </div>
 </div>
+
 <script>
-const MODES={teacher:{name:'🎓 Teacher',badge:'Teacher Mode',sys:'Eres un tutor experto que explica conceptos con claridad. Responde en el idioma del usuario.'},conversation:{name:'💬 Conversación',badge:'Conversation Mode',sys:'Eres un asistente amigable y natural. Respondes en el mismo idioma. Conversación fluida.'},translator:{name:'🌍 Traductor',badge:'Translator Mode',sys:'Eres un traductor profesional ES/EN/JA. Traduce y explica. Incluye romaji para japones.'}};
-let currentMode='teacher';
-function setMode(m){currentMode=m;const c=MODES[m];document.getElementById('modeTitle').textContent='🎓 Plan A — '+c.name;document.getElementById('modeBadge').textContent=c.badge;document.querySelectorAll('.mode-btn').forEach(b=>b.classList.remove('active'));document.querySelector(`[data-mode="${m}"]`).classList.add('active')}
-function addMsg(role,text){const d=document.createElement('div');d.className='msg '+role;d.textContent=text;const t=document.createElement('div');t.className='ts';t.textContent=new Date().toLocaleTimeString();d.appendChild(t);document.getElementById('msgs').appendChild(d);d.scrollIntoView({behavior:'smooth'})}
-async function send(){const i=document.getElementById('input');const t=i.value.trim();if(!t)return;addMsg('user',t);i.value='';document.getElementById('think').classList.add('show');document.getElementById('sendBtn').disabled=true;try{const r=await fetch('http://localhost:8081/completion',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:'<|im_start|>system\n'+MODES[currentMode].sys+'<|im_end|>\n<|im_start|>user\n'+t+'<|im_end|>\n<|im_start|>assistant\n',n_predict:256,temperature:currentMode==='teacher'?0.5:currentMode==='translator'?0.3:0.7,stop:['<|im_end|>']})});const d=await r.json();addMsg('assistant',d.content||'[sin respuesta]')}catch(e){addMsg('assistant','⚠️ Error: '+e.message+'. ¿Está corriendo llama-server?')}document.getElementById('think').classList.remove('show');document.getElementById('sendBtn').disabled=false}
+// ═══════════════════════════════════════════════════════════
+// CONFIGURATION
+// ═══════════════════════════════════════════════════════════
+const LLAMA_URL = 'http://localhost:8081';
+const TTS_URL     = 'http://localhost:3000/tts';
+const TTS_GPU_URL = 'http://localhost:3000/api/tts-gpu';
+const STATS_URL   = 'http://localhost:3000/api/stats';
+
+const LANGS = {
+  es: { name:'Español',  flag:'🇪🇸', code:'es-ES', tts:'piper' },
+  en: { name:'English',  flag:'🇺🇸', code:'en-US', tts:'piper' },
+  ja: { name:'日本語',    flag:'🇯🇵', code:'ja-JP', tts:'speech' }
+};
+
+const TOPIC_PROMPTS = {
+  random:     '',
+  travel:     'Habla sobre viajes, destinos turísticos, experiencias de viaje.',
+  technology: 'Habla sobre tecnología, programación, IA, gadgets.',
+  food:       'Habla sobre comida, recetas, restaurantes, gastronomía.',
+  culture:    'Habla sobre cultura, arte, tradiciones, costumbres de diferentes países.',
+  music:      'Habla sobre música, artistas, géneros musicales, conciertos.',
+  hobbies:    'Habla sobre pasatiempos, actividades recreativas, deportes.'
+};
+
+const MODE_SYSTEMS = {
+  teacher: `Eres un tutor paciente de idiomas. Tus respuestas DEBEN tener este formato exacto:
+
+[TEXT] texto en el idioma objetivo
+[ROMANJI] pronunciación en romanji o fonética
+[TRANS] traducción al idioma del usuario
+
+IMPORTANTE: El usuario incluirá "[Idioma del usuario: X]" al final de su mensaje indicando su idioma. USA ESA INFORMACIÓN para decidir el idioma de tus explicaciones.
+
+REGLAS:
+- Usa vocabulario PRINCIPIANTE (básico, palabras comunes)
+- Velocidad: frases cortas, 60-90 palabras por minuto
+- Si el usuario pregunta en español, EXPLICA en español
+- Si el usuario pregunta en inglés, EXPLICA en inglés
+- Si el usuario pregunta en japonés, EXPLICA en japonés
+- El [TEXT] siempre debe estar en el idioma que se está aprendiendo
+- El [ROMANJI] es la pronunciación (romanji para japonés, fonética simple para otros)
+- El [TRANS] es la traducción al idioma del usuario
+- Incluye contexto cultural cuando sea relevante`,
+
+  conversation: `Eres un compañero de conversación amigable y natural.
+
+REGLAS:
+- NO traduzcas lo que dices — solo conversa naturalmente
+- Puedes cambiar entre español, inglés y japonés libremente
+- Usa el mismo idioma que el usuario o alterna naturalmente
+- Sé cálido/a, natural, como hablando con un amigo
+- Continúa la conversación de forma natural
+- Haz preguntas para mantener la conversación fluyendo
+- Si el usuario se despide (adiós, bye, さようなら), despídete cordialmente
+- NO incluyas 【TEXT】 ni formatos especiales — solo habla natural`,
+
+  translator: `Eres un traductor profesional. Traduce EXACTAMENTE lo que el usuario dice.
+
+REGLAS:
+- Solo responde con la traducción, NADA más
+- NO pienses en voz alta. NO expliques. NO des contexto. Solo traduce.
+- Si el usuario escribe en español, responde en japonés
+- Si el usuario escribe en japonés, responde en español
+- Si el usuario escribe en inglés, responde en el otro idioma seleccionado
+- Para japonés: escribe en kanji + kana natural (no solo romanji)
+- Traducción exacta, preservando tono y registro
+- Respuesta corta y directa. Sin prefacios. Sin adornos.`
+};
+
+// ═══════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════
+let currentMode       = 'teacher';
+let isGenerating      = false;
+let abortController   = null;
+let selectedTopic     = 'random';
+let conversationActive = false;
+
+// Translator config
+let transLang1 = 'en';
+let transLang2 = 'ja';
+let transSplit = 'horizontal';
+
+// Conversation history (for all modes)
+let chatHistory = {
+  teacher: [],
+  conversation: [],
+  translator: []
+};
+const MAX_HISTORY_TOKENS = 2048; // max tokens before trimming oldest messages
+
+// Rough token estimation: ~4 chars/token for EN/ES, ~2 chars/token for JA
+function estimateTokens(text) {
+  let count = 0;
+  for (const c of text) {
+    const code = c.charCodeAt(0);
+    if (code >= 0x4e00 && code <= 0x9fff) count += 4; // CJK → ~1 token each
+    else if (code >= 0x3040 && code <= 0x30ff) count += 4; // Kana → ~1 token each
+    else count += 1; // Latin characters: ~4 chars = 1 token
+  }
+  return Math.ceil(count / 4);
+}
+
+function trimHistoryByTokens(history) {
+  let totalTokens = 0;
+  for (const msg of history) {
+    totalTokens += estimateTokens(msg.content) + 10; // +10 for role tags
+  }
+  while (totalTokens > MAX_HISTORY_TOKENS && history.length >= 2) {
+    const removed = history.splice(0, 2); // remove oldest exchange pair
+    for (const msg of removed) {
+      totalTokens -= estimateTokens(msg.content) + 10;
+    }
+  }
+}
+
+// Loading bar state
+let _prevLlamaConnected = null;
+let _prevVramMb = 0;
+let _connectedPolls = 0;
+let _modelReadyShown = false;
+let _loadingTimeoutId = null;
+
+// TTS
+let ttsAudio = null;
+let ttsAudioUrl = null;
+let ttsIsPlaying = false;
+let ttsIsPaused = false;
+let ttsQueue = [];
+let ttsMode = 'auto'; // 'piper' | 'outetts' | 'auto' (prefers OuteTTS for ES/EN, Speech for JA)
+let ttsGenerating = false;
+let _ttsProcessing = false; // prevent re-entrant calls to processTtsQueue
+
+// Active Listening
+let listeningActive = false;
+let recognition = null;
+let listenTranscript = '';
+let lastSentTranscript = '';
+let asrEngine = 'chrome'; // 'chrome' | 'whisper'
+
+// Whisper ASR state
+let whisperStream = null;
+let whisperContext = null;
+let whisperSource = null;
+let whisperProcessor = null;
+let whisperChunks = [];
+let whisperRecording = false;
+let whisperLastChunkTime = 0;
+const WHISPER_CHUNK_MS = 3000; // send every 3 seconds
+
+// ═══════════════════════════════════════════════════════════
+// MODE SWITCHING
+// ═══════════════════════════════════════════════════════════
+function setMode(m) {
+  currentMode = m;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector(`[data-mode="${m}"]`).classList.add('active');
+
+  // Hide all mode interfaces
+  document.getElementById('teacherInterface').style.display = 'none';
+  document.getElementById('conversationInterface').style.display = 'none';
+  document.getElementById('translatorInterface').style.display = 'none';
+
+  // Show active mode interface
+  if (m === 'teacher') {
+    document.getElementById('teacherInterface').style.display = 'flex';
+    document.getElementById('modeTitle').textContent = '🎓 Plan A — Teacher';
+    document.getElementById('modeBadge').textContent = 'Teacher';
+  } else if (m === 'conversation') {
+    document.getElementById('conversationInterface').style.display = 'flex';
+    document.getElementById('modeTitle').textContent = '💬 Plan A — Conversación';
+    document.getElementById('modeBadge').textContent = 'Conversación';
+  } else if (m === 'translator') {
+    document.getElementById('translatorInterface').style.display = 'flex';
+    document.getElementById('modeTitle').textContent = '🌍 Plan A — Traductor';
+    document.getElementById('modeBadge').textContent = 'Traductor';
+  }
+  sendLog('mode_change', `→ ${m}`);
+}
+
+function getSystemPrompt() {
+  let base = MODE_SYSTEMS[currentMode];
+
+  if (currentMode === 'teacher') {
+    return base;
+  }
+  if (currentMode === 'conversation') {
+    const topic = TOPIC_PROMPTS[selectedTopic] || '';
+    if (topic) {
+      base += `\n\nTEMA DE CONVERSACIÓN: ${topic}\nHabla sobre este tema de forma natural.`;
+    }
+    return base;
+  }
+  if (currentMode === 'translator') {
+    const l1 = LANGS[transLang1].name;
+    const l2 = LANGS[transLang2].name;
+    base = base.replace('IDIOMA 1', l1).replace('IDIOMA 2', l2);
+    return base;
+  }
+  return base;
+}
+
+// ═══════════════════════════════════════════════════════════
+// CONVERSATIONAL MODE: TOPICS
+// ═══════════════════════════════════════════════════════════
+function selectTopic(el, topic) {
+  selectedTopic = topic;
+  document.querySelectorAll('.topic-chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  const name = el.textContent.trim();
+  const msgDiv = document.getElementById('convMessages');
+  const d = document.createElement('div');
+  d.className = 'conv-msg assistant';
+  d.style.cssText = 'font-size:11px;color:var(--textDim);text-align:center;padding:8px;max-width:100%';
+  d.textContent = `🎯 Tema seleccionado: ${name}`;
+  msgDiv.appendChild(d);
+  d.scrollIntoView({ behavior: 'smooth' });
+}
+
+// ═══════════════════════════════════════════════════════════
+// TRANSLATOR MODE
+// ═══════════════════════════════════════════════════════════
+function updateTranslatorConfig() {
+  transLang1 = document.getElementById('transLang1').value;
+  transLang2 = document.getElementById('transLang2').value;
+
+  document.getElementById('transFlag1').textContent = LANGS[transLang1].flag;
+  document.getElementById('transLabel1').textContent = LANGS[transLang1].name + ' (Entrada)';
+  document.getElementById('transFlag2').textContent = LANGS[transLang2].flag;
+  document.getElementById('transLabel2').textContent = LANGS[transLang2].name + ' (Salida)';
+  document.getElementById('transLabel').textContent =
+    LANGS[transLang1].flag + ' ' + transLang1.toUpperCase() + ' → ' + LANGS[transLang2].flag + ' ' + transLang2.toUpperCase();
+
+  sendLog('translator_config', `${transLang1} → ${transLang2}`);
+}
+
+function setTranslatorSplit(mode) {
+  transSplit = mode;
+  document.querySelectorAll('.translator-split-toggle button').forEach(b => b.classList.remove('active'));
+  document.querySelector(`[data-split="${mode}"]`).classList.add('active');
+  document.getElementById('transPanels').className = 'translator-panels' + (mode === 'vertical' ? ' vertical' : '');
+}
+
+// ═══════════════════════════════════════════════════════════
+// LOGGING
+// ═══════════════════════════════════════════════════════════
+const LOG_URL = 'http://localhost:3000/api/log';
+function sendLog(type, data, extra) {
+  try {
+    fetch(LOG_URL, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type,
+        data: data ? (data.substring ? data.substring(0, 500) : String(data).substring(0, 500)) : '',
+        mode: currentMode,
+        language: detectLanguage(data || ''),
+        voice_model: extra || ''
+      })
+    }).catch(() => {});
+  } catch(e) {}
+}
+
+function detectLanguage(t) {
+  if (!t || !t.trim()) return 'en';
+  
+  // JA detection: Unicode Japanese characters
+  const jaRegex = /[\u3040-\u309f\u30a0-\u30ff\u4e00-\u9fff]/;
+  if (jaRegex.test(t)) {
+    // Check if Japanese chars are dominant over Latin
+    let jaCount = 0, latinCount = 0;
+    for (const c of t) {
+      const code = c.charCodeAt(0);
+      if ((code >= 0x3040 && code <= 0x309f) || (code >= 0x30a0 && code <= 0x30ff) || (code >= 0x4e00 && code <= 0x9fff)) {
+        jaCount++;
+      } else if ((code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a)) {
+        latinCount++;
+      }
+    }
+    // If Japanese chars >= Latin chars, it's Japanese
+    if (jaCount >= latinCount) return 'ja';
+    // Otherwise mixed-script, detect by Latin content below
+  }
+  
+  // ES detection: accented chars
+  if (/[áéíóúñü¿¡]/i.test(t)) return 'es';
+  
+  // ES detection: common Spanish words
+  const esWords = new Set(['hola','gracias','como','estas','muy','bien','que','el','la',
+    'los','las','un','una','por','para','con','sin','es','son','eres','soy',
+    'del','no','si','pero','mas','menos','todo','nada','algo','casa','agua',
+    'dia','dias','noche','hoy','ayer','manana','adios','luego','entonces',
+    'tambien','cada','bienvenido','amigo','gente','senor','senora','entre',
+    'este','esta','ese','esa','hablar','decir','tener','hacer','poder',
+    'saber','querer','comer','beber','dormir','vivir',
+    'bueno','buena','malo','mala','grande','pequeno','nuevo','viejo',
+    'siempre','nunca','pronto','tarde','temprano',
+    'cerca','lejos','encima','debajo','dentro','fuera',
+    'donde','cuando','porque','cual','quien','cuanto',
+    'saludos','feliz','contento','cansado','enojado',
+    'felicitaciones','bienvenida','permiso','disculpa','siento',
+    'perdon','perdona','escucha','atiende','mira','mire',
+    'felicidades','gracias','muchas','nada','favor']);
+  
+  const words = t.toLowerCase().split(/[\s,.;:!?]+/).filter(w => w.length > 1);
+  
+  // If > 3 words and any is Spanish, classify as Spanish
+  if (words.length >= 3) {
+    for (const w of words) {
+      if (esWords.has(w)) return 'es';
+    }
+  } else {
+    // For short texts, check if Spanish words are majority
+    let esCount = words.filter(w => esWords.has(w)).length;
+    if (esCount >= words.length / 2) return 'es';
+  }
+  
+  return 'en';
+}
+
+// ═══════════════════════════════════════════════════════════
+// HTML ESCAPE
+// ═══════════════════════════════════════════════════════════
+function escapeHtml(t) {
+  const d = document.createElement('div'); d.textContent = t; return d.innerHTML;
+}
+
+// ═══════════════════════════════════════════════════════════
+// SEND / CHAT
+// ═══════════════════════════════════════════════════════════
+async function sendText(text, fromMic) {
+  if (!text.trim() || isGenerating) return;
+
+  sendLog('input', text);
+
+  // Render user message based on active mode
+  if (currentMode === 'teacher') {
+    renderTeacherUserMsg(text, fromMic);
+  } else if (currentMode === 'conversation') {
+    renderConvUserMsg(text, fromMic);
+  } else if (currentMode === 'translator') {
+    renderTranslatorUserMsg(text, fromMic);
+  }
+
+  document.getElementById('think').classList.add('show');
+  document.getElementById('sendBtn').disabled = true;
+  isGenerating = true;
+
+  // Build messages for chat completions API
+  const sysPrompt = getSystemPrompt();
+  const history = chatHistory[currentMode];
+
+  // For teacher mode, add user's language detection context
+  let userPrompt = text;
+  if (currentMode === 'teacher') {
+    const userLang = detectLanguage(text);
+    const langName = LANGS[userLang]?.name || 'Español';
+    userPrompt = text + '\n[Idioma del usuario: ' + langName + ']';
+  }
+
+  // Add user message to history
+  history.push({ role: 'user', content: userPrompt });
+  // Trim history to max token budget (~2048 tokens)
+  trimHistoryByTokens(history);
+
+  // Build messages array for /chat/completions
+  const msgs = [
+    { role: 'system', content: sysPrompt },
+    ...history
+  ];
+
+  const THINK_REGEX = /<think>[\s\S]*?<\/think>\s*/g;
+  
+  abortController = new AbortController();
+
+  // Create placeholder for streaming
+  let streamBuffer = '';
+  let streamMsgEl = null;
+  let streamInterval = null;
+
+  // Create placeholder element immediately for streaming
+  if (currentMode === 'teacher') {
+    streamMsgEl = document.createElement('div');
+    streamMsgEl.className = 'teacher-output';
+    streamMsgEl.innerHTML = '<div class="teacher-line native"><div class="label">📖 Texto original</div><div class="text"><span class="streaming-cursor">▊</span></div></div>' +
+      '<div class="teacher-line romanji"><div class="label">🔤 Pronunciación</div><div class="text">—</div></div>' +
+      '<div class="teacher-line translation"><div class="label">🌍 Traducción</div><div class="text">—</div></div>' +
+      '<div class="teacher-level"><span class="stars">★ ★ ☆</span> Nivel: Principiante<span class="teacher-speed">🐢 generando...</span></div>';
+    document.getElementById('teacherInterface').appendChild(streamMsgEl);
+  } else if (currentMode === 'conversation') {
+    streamMsgEl = document.createElement('div');
+    streamMsgEl.className = 'conv-msg assistant';
+    streamMsgEl.innerHTML = '<span class="streaming-text">▊</span><div class="ts">🌐 ' + new Date().toLocaleTimeString() + '</div>';
+    document.getElementById('convMessages').appendChild(streamMsgEl);
+  } else if (currentMode === 'translator') {
+    streamMsgEl = document.createElement('div');
+    streamMsgEl.className = 'translator-msg lang2';
+    streamMsgEl.innerHTML = '<span class="streaming-text">▊</span><div class="ts">' + new Date().toLocaleTimeString() + '</div>';
+    document.getElementById('transMsgs2').appendChild(streamMsgEl);
+  }
+
+  const updateStreamDisplay = () => {
+    if (!streamMsgEl) return;
+    // Progressively strip <think> tags during streaming (hide reasoning noise)
+    const cleanedBuffer = (streamBuffer || '').replace(/<think>[\s\S]*?(?:<\/think>|$)/g, '').trim();
+    const displayText = cleanedBuffer || '▊';
+    if (currentMode === 'teacher') {
+      // Try to parse structured output progressively
+      const tMatch = streamBuffer.match(/\[TEXT\]\s*([\s\S]*?)(?=\[ROMANJI\]|\[TRANS\]|$)/);
+      const rMatch = streamBuffer.match(/\[ROMANJI\]\s*([\s\S]*?)(?=\[TRANS\]|\[TEXT\]|$)/);
+      const trMatch = streamBuffer.match(/\[TRANS\]\s*([\s\S]*?)$/);
+      const lines = streamMsgEl.querySelectorAll('.teacher-line .text');
+      if (lines.length >= 3) {
+        lines[0].textContent = (tMatch ? tMatch[1].trim() : streamBuffer) || '▊';
+        lines[1].textContent = rMatch ? rMatch[1].trim() : '—';
+        lines[2].textContent = trMatch ? trMatch[1].trim() : '—';
+      }
+    } else {
+      const el = streamMsgEl.querySelector('.streaming-text');
+      if (el) {
+        el.textContent = escapeHtml(displayText).replace(/\n/g, '<br>');
+      }
+    }
+    streamMsgEl.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  // Update streaming display every 100ms
+  streamInterval = setInterval(updateStreamDisplay, 100);
+
+  // Build request to /api/chat (which proxies to /chat/completions)
+  const requestBody = {
+    messages: msgs,
+    n_predict: currentMode === 'teacher' ? 512 : currentMode === 'translator' ? 384 : 768,
+    temperature: currentMode === 'teacher' ? 0.5 : currentMode === 'translator' ? 0.3 : 0.8,
+    stream: true
+  };
+
+  try {
+    const resp = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: abortController.signal,
+      body: JSON.stringify(requestBody)
+    });
+
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+
+    // Read SSE stream (chat completions format)
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let sseBuffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      sseBuffer += decoder.decode(value, { stream: true });
+      const lines = sseBuffer.split('\n');
+      sseBuffer = lines.pop() || ''; // keep incomplete line
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const dataStr = line.slice(6).trim();
+          // Parse chat completions SSE: choices[0].delta.content
+          if (dataStr && dataStr !== '[DONE]') {
+            try {
+              const jsonData = JSON.parse(dataStr);
+              const delta = jsonData.choices && jsonData.choices[0] && jsonData.choices[0].delta;
+              if (delta && delta.content) {
+                streamBuffer += delta.content;
+              }
+            } catch (e) {}
+          } else if (dataStr === '[DONE]') {
+            // Stream complete
+            clearInterval(streamInterval);
+            streamInterval = null;
+            updateStreamDisplay();
+
+            // Finalize — strip any remaining <think> tags (safety net)
+            let responseText = streamBuffer.replace(THINK_REGEX, '').trim();
+            if (!responseText) responseText = streamBuffer;
+
+              // Add to history
+              history.push({ role: 'assistant', content: responseText });
+              trimHistoryByTokens(history);
+
+              sendLog('output', responseText);
+
+              // Final render (re-render with proper formatting)
+              if (currentMode === 'teacher') {
+                streamMsgEl.remove();
+                renderTeacherResponse(responseText);
+              } else if (currentMode === 'conversation') {
+                const lang = detectLanguage(responseText);
+                const flag = LANGS[lang]?.flag || '🌐';
+                streamMsgEl.innerHTML = escapeHtml(responseText).replace(/\n/g, '<br>') +
+                  '<div class="ts">' + flag + ' ' + new Date().toLocaleTimeString() + '</div>';
+              } else if (currentMode === 'translator') {
+                streamMsgEl.innerHTML = escapeHtml(responseText) + '<div class="ts">' + new Date().toLocaleTimeString() + '</div>';
+              }
+
+              // Auto-TTS
+              if (responseText && responseText !== '[sin respuesta]') {
+                playTts(responseText);
+              }
+
+              // Detect goodbye in conversational mode
+              if (currentMode === 'conversation') {
+                const goodbyeWords = ['adiós','adios','bye','goodbye','see you','chao','ciao','sayonara','さようなら','またね','じゃあね','hasta luego','nos vemos','hasta pronto','have a good day','take care','nos vemos luego'];
+                const lower = responseText.toLowerCase();
+                const isGoodbye = goodbyeWords.some(w => lower.includes(w));
+                if (isGoodbye) {
+                  setTimeout(() => {
+                    const endMsg = document.createElement('div');
+                    endMsg.className = 'conv-msg assistant';
+                    endMsg.style.cssText = 'font-size:11px;color:var(--textDim);text-align:center;padding:8px;max-width:100%';
+                    endMsg.textContent = '👋 Conversación finalizada. Elige otro tema o escribe para empezar de nuevo.';
+                    document.getElementById('convMessages').appendChild(endMsg);
+                    endMsg.scrollIntoView({ behavior: 'smooth' });
+                  }, 1000);
+                }
+              }
+
+              // ⬇ CLEANUP: re-enable UI (needed because return skips bottom cleanup)
+              isGenerating = false;
+              abortController = null;
+              document.getElementById('think').classList.remove('show');
+              document.getElementById('sendBtn').disabled = false;
+              return; // exit early on stream complete
+            }
+          } catch (e) {
+            // JSON parse error on partial line, skip
+          }
+        }
+      }
+    }
+
+    // If we get here, stream ended without stop=true
+    clearInterval(streamInterval);
+    streamInterval = null;
+    let finalText = (streamBuffer || '[sin respuesta]').replace(THINK_REGEX, '').trim();
+    if (!finalText) finalText = streamBuffer || '[sin respuesta]';
+    const responseText = finalText;
+    history.push({ role: 'assistant', content: responseText });
+    trimHistoryByTokens(history);
+    sendLog('output', responseText);
+
+    if (currentMode === 'teacher') {
+      streamMsgEl.remove();
+      renderTeacherResponse(responseText);
+    } else if (currentMode === 'conversation') {
+      const lang = detectLanguage(responseText);
+      const flag = LANGS[lang]?.flag || '🌐';
+      streamMsgEl.innerHTML = escapeHtml(responseText).replace(/\n/g, '<br>') +
+        '<div class="ts">' + flag + ' ' + new Date().toLocaleTimeString() + '</div>';
+    } else if (currentMode === 'translator') {
+      streamMsgEl.innerHTML = escapeHtml(responseText) + '<div class="ts">' + new Date().toLocaleTimeString() + '</div>';
+    }
+
+    if (responseText && responseText !== '[sin respuesta]') {
+      playTts(responseText);
+    }
+
+  } catch (e) {
+    clearInterval(streamInterval);
+    streamInterval = null;
+    if (streamMsgEl) streamMsgEl.remove();
+
+    if (e.name === 'AbortError') {
+      if (currentMode === 'conversation') {
+        renderConvResponse('⏸️ Generación interrumpida.');
+      } else if (currentMode === 'translator') {
+        addTranslatorMsg('lang1', '⏸️ Interrumpido');
+      } else {
+        renderTeacherResponse('[TEXT]\n[ROMANJI]\n[TRANS] Generación interrumpida.');
+      }
+    } else {
+      const errMsg = '⚠️ Error: ' + e.message;
+      if (currentMode === 'conversation') {
+        renderConvResponse(errMsg + '. ¿Está corriendo llama-server?');
+      } else if (currentMode === 'translator') {
+        addTranslatorMsg('lang1', errMsg);
+      } else {
+        renderTeacherResponse('[TEXT]\n[ROMANJI]\n[TRANS] ' + errMsg);
+      }
+    }
+  }
+
+  isGenerating = false;
+  abortController = null;
+  document.getElementById('think').classList.remove('show');
+  document.getElementById('sendBtn').disabled = false;
+}
+
+function send() {
+  const input = document.getElementById('input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  sendText(text, false);
+}
+
+// ═══════════════════════════════════════════════════════════
+// TEACHER MODE RENDERERS
+// ═══════════════════════════════════════════════════════════
+function renderTeacherUserMsg(text, fromMic) {
+  const container = document.getElementById('teacherInterface');
+  const d = document.createElement('div');
+  d.className = 'msg user';
+  d.innerHTML = escapeHtml(text).replace(/\n/g, '<br>') +
+    '<div class="ts">' + new Date().toLocaleTimeString() + (fromMic ? ' 🎤 voz' : '') + '</div>';
+  container.appendChild(d);
+  d.scrollIntoView({ behavior: 'smooth' });
+}
+
+function renderTeacherResponse(raw) {
+  const container = document.getElementById('teacherInterface');
+  const d = document.createElement('div');
+  d.className = 'teacher-output';
+
+  // Parse structured output — support both [TEXT] and 【TEXT】 formats
+  let textLine = '', romanjiLine = '', transLine = '';
+
+  // Try multiple bracket styles: 【TEXT】, [TEXT], TEXT:
+  const textMatch = raw.match(/(?:【TEXT】|\[TEXT\]|^TEXT:)\s*([\s\S]*?)(?=(?:【ROMANJI】|\[ROMANJI\]|ROMANJI:)|(?:【TRANS】|\[TRANS\]|TRANS:)|$)/m);
+  const romanjiMatch = raw.match(/(?:【ROMANJI】|\[ROMANJI\]|^ROMANJI:)\s*([\s\S]*?)(?=(?:【TRANS】|\[TRANS\]|TRANS:)|(?:【TEXT】|\[TEXT\]|TEXT:)|$)/m);
+  const transMatch = raw.match(/(?:【TRANS】|\[TRANS\]|^TRANS:)\s*([\s\S]*?)$/m);
+
+  if (textMatch) textLine = textMatch[1].trim();
+  if (romanjiMatch) romanjiLine = romanjiMatch[1].trim();
+  if (transMatch) transLine = transMatch[1].trim();
+
+  // Fallback: if parsing failed, show raw text
+  if (!textLine && !romanjiLine && !transLine) {
+    textLine = raw;
+    romanjiLine = '(formato no reconocido)';
+    transLine = '';
+  }
+
+  d.innerHTML =
+    '<div class="teacher-line native">' +
+      '<div class="label">📖 Texto original</div>' +
+      '<div class="text">' + escapeHtml(textLine).replace(/\n/g, '<br>') + '</div>' +
+    '</div>' +
+    (romanjiLine ? '<div class="teacher-line romanji">' +
+      '<div class="label">🔤 Pronunciación</div>' +
+      '<div class="text">' + escapeHtml(romanjiLine).replace(/\n/g, '<br>') + '</div>' +
+    '</div>' : '') +
+    (transLine ? '<div class="teacher-line translation">' +
+      '<div class="label">🌍 Traducción</div>' +
+      '<div class="text">' + escapeHtml(transLine).replace(/\n/g, '<br>') + '</div>' +
+    '</div>' : '') +
+    '<div class="teacher-level">' +
+      '<span class="stars">★ ★ ☆</span> Nivel: Principiante' +
+      '<span class="teacher-speed">🐢 ' + new Date().toLocaleTimeString() + '</span>' +
+    '</div>';
+
+  container.appendChild(d);
+  d.scrollIntoView({ behavior: 'smooth' });
+}
+
+// ═══════════════════════════════════════════════════════════
+// CONVERSATIONAL MODE RENDERERS
+// ═══════════════════════════════════════════════════════════
+function renderConvUserMsg(text, fromMic) {
+  const container = document.getElementById('convMessages');
+  const d = document.createElement('div');
+  d.className = 'conv-msg user';
+  d.innerHTML = escapeHtml(text).replace(/\n/g, '<br>') +
+    '<div class="ts">' + new Date().toLocaleTimeString() + (fromMic ? ' 🎤' : '') + '</div>';
+  container.appendChild(d);
+  d.scrollIntoView({ behavior: 'smooth' });
+}
+
+function renderConvResponse(text) {
+  const container = document.getElementById('convMessages');
+  const d = document.createElement('div');
+  d.className = 'conv-msg assistant';
+
+  // Detect language for tag
+  const lang = detectLanguage(text);
+  const flag = LANGS[lang]?.flag || '🌐';
+
+  d.innerHTML = escapeHtml(text).replace(/\n/g, '<br>') +
+    '<div class="ts">' + flag + ' ' + new Date().toLocaleTimeString() + '</div>';
+  container.appendChild(d);
+  d.scrollIntoView({ behavior: 'smooth' });
+}
+
+// ═══════════════════════════════════════════════════════════
+// TRANSLATOR MODE RENDERERS
+// ═══════════════════════════════════════════════════════════
+function addTranslatorMsg(panel, text) {
+  const container = document.getElementById(panel === 'lang1' ? 'transMsgs1' : 'transMsgs2');
+  const d = document.createElement('div');
+  const cls = panel === 'lang1' ? 'lang1' : 'lang2';
+  d.className = 'translator-msg ' + cls;
+  d.innerHTML = escapeHtml(text) + '<div class="ts">' + new Date().toLocaleTimeString() + '</div>';
+  container.appendChild(d);
+  d.scrollIntoView({ behavior: 'smooth' });
+}
+
+function renderTranslatorUserMsg(text, fromMic) {
+  // Always show user input in LANG1 panel (input language)
+  addTranslatorMsg('lang1', text);
+}
+
+function renderTranslatorResponse(text) {
+  // Always show model response in LANG2 panel (output language)
+  addTranslatorMsg('lang2', text);
+}
+
+// ═══════════════════════════════════════════════════════════
+// TTS (TEXT-TO-SPEECH) — MULTILINGUAL SEGMENTED
+// ═══════════════════════════════════════════════════════════
+const TTS_PIPER_URL = 'http://localhost:3000/api/tts-piper';
+
+function updateTtsUi() {
+  const status = document.getElementById('ttsStatus');
+  const pauseBtn = document.getElementById('ttsPauseBtn');
+  const stopBtn = document.getElementById('ttsStopBtn');
+
+  const hasJapanese = ttsQueue.some(item => item.lang === 'ja');
+
+  if (ttsGenerating) {
+    status.textContent = '⏳ Generando audio...';
+    pauseBtn.disabled = true;
+    stopBtn.disabled = false;
+  } else if (ttsIsPlaying || ttsQueue.length > 0) {
+    if (ttsIsPaused) {
+      status.textContent = '⏸️ Pausado · ' + ttsQueue.length + ' pend';
+      pauseBtn.textContent = '▶️';
+    } else {
+      status.textContent = '🔊 Hablando... · ' + ttsQueue.length + ' pend';
+      pauseBtn.textContent = '⏸️';
+    }
+    pauseBtn.disabled = false;
+    stopBtn.disabled = false;
+  } else {
+    status.textContent = '🔇 Silencio';
+    pauseBtn.disabled = true;
+    stopBtn.disabled = true;
+    pauseBtn.textContent = '⏸️';
+  }
+}
+
+function setTtsMode(mode) {
+  ttsMode = mode;
+  sendLog('tts_mode', mode);
+}
+
+/**
+ * Divide texto en segmentos por idioma (es/en/ja).
+ * Detecta cambios de idioma a nivel de oracion y caracter.
+ * 
+ * Estrategia:
+ * 1. Dividir por saltos de linea (boundaries fuertes)
+ * 2. Dentro de cada linea, dividir por puntuacion final
+ * 3. Para lineas con scripts mixtos (e.g. "Hello こんにちは"),
+ *    dividir en el punto de transicion de script.
+ */
+function splitTextByLanguage(text) {
+  if (!text || !text.trim()) return [];
+  
+  // Step 1: Split by newlines first
+  const lines = text.split('\n').filter(l => l.trim());
+  
+  // Helper: check if text has Japanese characters
+  function hasJapaneseChars(str) {
+    return /[\u3040-\u309f\u30a0-\u30ff\u4e00-\u9fff]/.test(str);
+  }
+  
+  // Helper: check if a character is Japanese
+  function isJapaneseChar(c) {
+    const code = c.charCodeAt(0);
+    return (code >= 0x3040 && code <= 0x309f) || 
+           (code >= 0x30a0 && code <= 0x30ff) || 
+           (code >= 0x4e00 && code <= 0x9fff);
+  }
+  
+  // Helper: check if a character is Latin
+  function isLatinChar(c) {
+    const code = c.charCodeAt(0);
+    return (code >= 0x41 && code <= 0x5a) || 
+           (code >= 0x61 && code <= 0x7a) || 
+           c === ' ' || c === ',' || c === '.' || c === '!' || c === '?' || 
+           c === ';' || c === ':' || c === '\'' || c === '"' || c === '-';
+  }
+  
+  // Helper: split mixed-script text at script boundaries
+  function splitMixedScript(text) {
+    if (!hasJapaneseChars(text)) {
+      return [{ text: text, lang: detectLanguage(text) }];
+    }
+    
+    const result = [];
+    let current = '';
+    let currentType = null;
+    
+    for (const c of text) {
+      const isJa = isJapaneseChar(c);
+      const isLatin = isLatinChar(c);
+      const charType = isJa ? 'ja' : (isLatin ? 'latin' : 'other');
+      
+      if (charType === 'other' && !current) continue;  // skip leading punctuation
+      
+      if (currentType === null) {
+        current = c;
+        currentType = charType;
+      } else if (charType === currentType || (charType === 'other' && !isJa)) {
+        current += c;
+      } else {
+        // Transition detected
+        if (current.trim()) {
+          result.push({ text: current.trim(), lang: currentType === 'ja' ? 'ja' : detectLanguage(current) });
+        }
+        current = c;
+        currentType = charType;
+      }
+    }
+    
+    // Last segment
+    if (current && current.trim()) {
+      result.push({ text: current.trim(), lang: currentType === 'ja' ? 'ja' : detectLanguage(current) });
+    }
+    
+    return result.length > 0 ? result : [{ text: text, lang: detectLanguage(text) }];
+  }
+  
+  // Process each line
+  const rawSegments = [];
+  for (const line of lines) {
+    // Split line by sentence punctuation
+    const sentences = line.split(/(?<=[.!?¡!¿?])\s+/).filter(s => s.trim());
+    
+    if (sentences.length === 0) {
+      // Check for mixed scripts
+      const mixed = splitMixedScript(line);
+      rawSegments.push(...mixed);
+    } else {
+      for (const s of sentences) {
+        const mixed = splitMixedScript(s.trim());
+        rawSegments.push(...mixed);
+      }
+    }
+  }
+  
+  // Merge consecutive same-language segments
+  const segments = [];
+  for (const seg of rawSegments) {
+    if (segments.length > 0 && segments[segments.length - 1].lang === seg.lang) {
+      segments[segments.length - 1].text += ' ' + seg.text;
+    } else {
+      segments.push({ text: seg.text, lang: seg.lang });
+    }
+  }
+  
+  return segments.length > 0 ? segments : [{ text: text, lang: detectLanguage(text) }];
+}
+
+/**
+ * Reproduce TTS con deteccion inteligente de idioma.
+ * Segmenta el texto y usa el motor adecuado para cada segmento.
+ */
+async function playTts(text) {
+  if (!text || !text.trim()) return;
+  
+  sendLog('tts_start', text.substring(0, 100), 'multi');
+  
+  // Stop any existing audio
+  if (ttsAudio && ttsIsPlaying) {
+    ttsAudio.pause();
+    ttsAudio = null;
+    if (ttsAudioUrl) {
+      URL.revokeObjectURL(ttsAudioUrl);
+      ttsAudioUrl = null;
+    }
+  }
+  if (window.speechSynthesis && speechSynthesis.speaking) {
+    speechSynthesis.cancel();
+  }
+  
+  // Split text by language segments
+  const segments = splitTextByLanguage(text);
+  
+  // If only one segment and it's not mixed, use old route for speed
+  if (segments.length === 1) {
+    const seg = segments[0];
+    if (seg.lang === 'ja') {
+      ttsQueue.push({ text: seg.text, lang: 'ja' });
+    } else if (ttsMode === 'outetts') {
+      ttsQueue.push({ text: seg.text, lang: 'outetts' });
+    } else if (ttsMode === 'auto' || ttsMode === 'piper') {
+      ttsQueue.push({ text: seg.text, lang: seg.lang === 'en' ? 'en' : 'piper' });
+    }
+    updateTtsUi();
+    if (!ttsGenerating) processTtsQueue();
+    return;
+  }
+  
+  // Multiple segments: use segmented endpoint
+  // Queue the segments and let processTtsQueue handle them
+  for (const seg of segments) {
+    if (seg.lang === 'ja') {
+      ttsQueue.push({ text: seg.text, lang: 'ja' });
+    } else {
+      // Use piper with explicit language
+      ttsQueue.push({ text: seg.text, lang: seg.lang, piper: true });
+    }
+  }
+  
+  updateTtsUi();
+  if (!ttsGenerating) processTtsQueue();
+}
+
+async function processTtsQueue() {
+  if (_ttsProcessing) return;
+  _ttsProcessing = true;
+
+  if (ttsQueue.length === 0) {
+    ttsGenerating = false;
+    _ttsProcessing = false;
+    updateTtsUi();
+    return;
+  }
+
+  ttsGenerating = true;
+  const item = ttsQueue.shift();
+  updateTtsUi();
+
+  // JA: Chrome SpeechSynthesis (fast, no network)
+  if (item.lang === 'ja') {
+    try {
+      await speakJapanese(item.text);
+    } catch (e) {
+      console.warn('JA TTS error:', e.message);
+    }
+    ttsGenerating = false;
+    _ttsProcessing = false;
+    updateTtsUi();
+    processTtsQueue();
+    return;
+  }
+
+  // OuteTTS GPU (high quality)
+  if (item.lang === 'outetts') {
+    try {
+      const resp = await fetch(TTS_GPU_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: item.text })
+      });
+      if (resp.ok) {
+        const blob = await resp.blob();
+        if (blob.size > 1000) {
+          await playAudioBlob(blob, 'outetts');
+          ttsGenerating = false;
+          _ttsProcessing = false;
+          updateTtsUi();
+          processTtsQueue();
+          return;
+        }
+      }
+      console.warn('OuteTTS failed, falling back to Piper');
+    } catch (e) {
+      console.warn('OuteTTS error:', e.message, '-> fallback to Piper');
+    }
+    // Fallback to Piper with lang detection
+    item.lang = item.piper ? item.lang : detectLanguage(item.text);
+    item.piper = true;
+  }
+
+  // Piper TTS with explicit language selection
+  if (item.piper || item.lang === 'piper' || item.lang === 'en' || item.lang === 'es') {
+    const lang = (item.lang === 'en' || item.lang === 'es') ? item.lang : 'auto';
+    try {
+      // Use new /api/tts-piper endpoint for explicit language control
+      const resp = await fetch(TTS_PIPER_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: item.text, lang: lang })
+      });
+
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => ({}));
+        console.warn('Piper TTS error:', errData.error || resp.status);
+        ttsGenerating = false;
+        _ttsProcessing = false;
+        updateTtsUi();
+        processTtsQueue();
+        return;
+      }
+
+      const blob = await resp.blob();
+      await playAudioBlob(blob, 'piper-' + lang);
+    } catch (e) {
+      console.warn('Piper TTS error:', e.message);
+    }
+    
+    ttsGenerating = false;
+    _ttsProcessing = false;
+    updateTtsUi();
+    processTtsQueue();
+    return;
+  }
+
+  // Unknown lang — skip
+  ttsGenerating = false;
+  _ttsProcessing = false;
+  updateTtsUi();
+  processTtsQueue();
+}
+
+async function playAudioBlob(blob, engine) {
+  const url = URL.createObjectURL(blob);
+  const audio = new Audio(url);
+  ttsAudio = audio;
+  ttsAudioUrl = url;
+  ttsIsPlaying = true;
+  ttsIsPaused = false;
+
+  const progressBar = document.getElementById('ttsProgressFill');
+  audio.addEventListener('timeupdate', () => {
+    if (audio.duration && !isNaN(audio.duration) && audio.duration > 0) {
+      progressBar.style.width = Math.min((audio.currentTime / audio.duration) * 100, 100) + '%';
+    }
+  });
+  audio.addEventListener('loadedmetadata', () => { progressBar.style.width = '0%'; });
+
+  return new Promise((resolve) => {
+    audio.onended = () => {
+      progressBar.style.width = '0%';
+      if (ttsAudioUrl) { URL.revokeObjectURL(ttsAudioUrl); ttsAudioUrl = null; }
+      ttsAudio = null;
+      ttsIsPlaying = false;
+      ttsIsPaused = false;
+      resolve();
+    };
+    audio.onerror = () => {
+      progressBar.style.width = '0%';
+      ttsAudio = null;
+      ttsIsPlaying = false;
+      resolve();
+    };
+    audio.play().catch((e) => {
+      console.warn('Audio play error:', e.message);
+      resolve();
+    });
+    sendLog('tts_play', '', engine || 'piper');
+    updateTtsUi();
+  });
+}
+function speakJapanese(text) {
+  return new Promise((resolve) => {
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'ja-JP';
+    utterance.rate = 0.85;
+    utterance.pitch = 1.0;
+
+    const voices = speechSynthesis.getVoices();
+    const jaVoice = voices.find(v => v.lang.startsWith('ja'));
+    if (jaVoice) utterance.voice = jaVoice;
+
+    window._jaUtterance = utterance;
+    const progressBar = document.getElementById('ttsProgressFill');
+
+    utterance.onstart = () => {
+      ttsIsPlaying = true;
+      ttsIsPaused = false;
+      let progress = 0;
+      window._jaProgressInterval = setInterval(() => {
+        progress = Math.min(progress + 3, 95);
+        progressBar.style.width = progress + '%';
+      }, 200);
+      updateTtsUi();
+    };
+
+    utterance.onend = () => {
+      if (window._jaProgressInterval) { clearInterval(window._jaProgressInterval); window._jaProgressInterval = null; }
+      progressBar.style.width = '0%';
+      ttsIsPlaying = false;
+      ttsIsPaused = false;
+      window._jaUtterance = null;
+      updateTtsUi();
+      resolve();
+    };
+
+    utterance.onerror = () => {
+      window._jaUtterance = null;
+      ttsIsPlaying = false;
+      progressBar.style.width = '0%';
+      resolve();
+    };
+
+    speechSynthesis.speak(utterance);
+  });
+}
+
+function toggleTtsPause() {
+  if (window._jaUtterance && speechSynthesis.speaking) {
+    if (ttsIsPaused) { speechSynthesis.resume(); ttsIsPaused = false; }
+    else { speechSynthesis.pause(); ttsIsPaused = true; }
+    updateTtsUi();
+    return;
+  }
+  if (!ttsAudio) return;
+  if (ttsIsPaused) {
+    ttsAudio.play().catch(() => { ttsIsPaused = true; updateTtsUi(); });
+    ttsIsPaused = false;
+  } else {
+    ttsAudio.pause();
+    ttsIsPaused = true;
+  }
+  updateTtsUi();
+}
+
+function stopTts() {
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
+  window._jaUtterance = null;
+  if (window._jaProgressInterval) { clearInterval(window._jaProgressInterval); window._jaProgressInterval = null; }
+  if (ttsAudio) { ttsAudio.pause(); ttsAudio = null; }
+  if (ttsAudioUrl) { URL.revokeObjectURL(ttsAudioUrl); ttsAudioUrl = null; }
+  ttsQueue = [];
+  ttsIsPlaying = false;
+  ttsIsPaused = false;
+  ttsGenerating = false;
+  document.getElementById('ttsProgressFill').style.width = '0%';
+  updateTtsUi();
+}
+
+// ═══════════════════════════════════════════════════════════
+// ACTIVE LISTENING (Speech → Text)
+// ═══════════════════════════════════════════════════════════
+function setAsrMode(mode) {
+  asrEngine = mode;
+  sendLog('asr_mode', mode);
+  // If listening is active, restart with new engine
+  if (listeningActive) {
+    stopListening();
+    setTimeout(() => startListening(), 300);
+  }
+}
+
+function changeListenLang() {
+  if (listeningActive) {
+    stopListening();
+    setTimeout(() => startListening(), 200);
+  }
+}
+
+function stopListening() {
+  if (asrEngine === 'chrome') {
+    stopRecognition();
+  } else {
+    stopWhisperRecording();
+  }
+}
+
+function startListening() {
+  if (asrEngine === 'chrome') {
+    startRecognition();
+  } else {
+    startWhisperRecording();
+  }
+}
+
+function toggleListening() {
+  listeningActive = !listeningActive;
+  const toggle = document.getElementById('listenToggle');
+  const track = document.getElementById('listenTrack');
+  const indicator = document.getElementById('listenIndicator');
+  const statusText = document.getElementById('listenStatusText');
+  const flash = document.getElementById('listeningFlash');
+
+  if (listeningActive) {
+    toggle.classList.add('active');
+    track.classList.add('active');
+    indicator.className = 'listen-indicator listening';
+    statusText.textContent = '🎤 Escuchando (' + (asrEngine === 'chrome' ? 'Chrome' : 'Whisper') + ')...';
+    flash.className = 'listening-flash active';
+    startListening();
+  } else {
+    toggle.classList.remove('active');
+    track.classList.remove('active');
+    indicator.className = 'listen-indicator idle';
+    statusText.textContent = 'Desactivado';
+    flash.className = 'listening-flash';
+    stopListening();
+  }
+}
+
+function startRecognition() {
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRec) {
+    document.getElementById('listenStatusText').textContent = '❌ No soportado';
+    listeningActive = false;
+    document.getElementById('listenToggle').classList.remove('active');
+    document.getElementById('listenTrack').classList.remove('active');
+    return;
+  }
+
+  recognition = new SpeechRec();
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.lang = document.getElementById('listenLang').value;
+
+  recognition.onresult = (event) => {
+    let finalTranscript = '';
+    let interimTranscript = '';
+
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const result = event.results[i];
+      if (result.isFinal) finalTranscript += result[0].transcript + ' ';
+      else interimTranscript += result[0].transcript;
+    }
+
+    listenTranscript = finalTranscript || interimTranscript;
+    document.getElementById('listenTranscript').textContent = listenTranscript
+      ? '🗣️ ' + listenTranscript : '🎤 Escuchando...';
+
+    const text = finalTranscript.trim();
+    if (text.length > 2 && text !== lastSentTranscript) {
+      lastSentTranscript = text;
+
+      // Interrupt if generating
+      if (isGenerating && abortController) {
+        abortController.abort();
+        stopTts();
+        document.getElementById('listenIndicator').className = 'listen-indicator speaking';
+        document.getElementById('listenStatusText').textContent = '🗣️ Interrumpiendo...';
+        document.getElementById('listeningFlash').className = 'listening-flash speaking';
+
+        setTimeout(() => {
+          sendText(text, true);
+          document.getElementById('listenIndicator').className = 'listen-indicator listening';
+          document.getElementById('listenStatusText').textContent = '🟢 Escuchando...';
+          document.getElementById('listeningFlash').className = 'listening-flash active';
+        }, 300);
+      } else if (!isGenerating) {
+        document.getElementById('listenIndicator').className = 'listen-indicator speaking';
+        document.getElementById('listenStatusText').textContent = '🗣️ Voz detectada...';
+        document.getElementById('listeningFlash').className = 'listening-flash speaking';
+
+        sendText(text, true);
+
+        setTimeout(() => {
+          document.getElementById('listenIndicator').className = 'listen-indicator listening';
+          document.getElementById('listenStatusText').textContent = '🟢 Escuchando...';
+          document.getElementById('listeningFlash').className = 'listening-flash active';
+        }, 500);
+      }
+    }
+  };
+
+  recognition.onerror = (event) => {
+    console.warn('Speech error:', event.error);
+    if (event.error === 'no-speech' || event.error === 'aborted') return;
+    document.getElementById('listenStatusText').textContent = '⚠️ Error: ' + event.error;
+  };
+
+  recognition.onend = () => {
+    if (listeningActive) {
+      setTimeout(() => { if (listeningActive) startRecognition(); }, 300);
+    }
+  };
+
+  try { recognition.start(); } catch (e) { console.warn('Rec start failed:', e); }
+}
+
+function stopRecognition() {
+  if (recognition) { try { recognition.stop(); } catch(e) {} recognition = null; }
+  document.getElementById('listenTranscript').textContent = '—';
+}
+
+// ═══════════════════════════════════════════════════════════
+// WHISPER ASR (Local Speech → Text via whisper.cpp)
+// ═══════════════════════════════════════════════════════════
+const ASR_URL = 'http://localhost:3000/api/asr';
+
+function startWhisperRecording() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    document.getElementById('listenStatusText').textContent = '❌ Micrófono no disponible';
+    listeningActive = false;
+    document.getElementById('listenToggle').classList.remove('active');
+    document.getElementById('listenTrack').classList.remove('active');
+    return;
+  }
+
+  navigator.mediaDevices.getUserMedia({ audio: {
+    echoCancellation: true,
+    noiseSuppression: true,
+    sampleRate: 16000
+  }}).then(stream => {
+    whisperStream = stream;
+    whisperContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+    whisperSource = whisperContext.createMediaStreamSource(stream);
+    whisperChunks = [];
+    whisperRecording = true;
+    whisperLastChunkTime = Date.now();
+
+    // Process audio in chunks
+    whisperProcessor = whisperContext.createScriptProcessor(4096, 1, 1);
+    whisperSource.connect(whisperProcessor);
+    whisperProcessor.connect(whisperContext.destination);
+
+    whisperProcessor.onaudioprocess = (event) => {
+      if (!whisperRecording) return;
+      const input = event.inputBuffer.getChannelData(0);
+      whisperChunks.push(new Float32Array(input));
+
+      // Check if it's time to send a chunk
+      const now = Date.now();
+      if (now - whisperLastChunkTime >= WHISPER_CHUNK_MS) {
+        whisperLastChunkTime = now;
+        processWhisperChunk();
+      }
+    };
+
+    document.getElementById('listenStatusText').textContent = '🎤 Whisper ASR activo';
+  }).catch(err => {
+    console.warn('Mic error:', err);
+    document.getElementById('listenStatusText').textContent = '❌ Error: ' + err.message;
+    listeningActive = false;
+    document.getElementById('listenToggle').classList.remove('active');
+    document.getElementById('listenTrack').classList.remove('active');
+  });
+}
+
+function stopWhisperRecording() {
+  whisperRecording = false;
+  // Process any remaining audio
+  if (whisperChunks.length > 2) {
+    processWhisperChunk();
+  }
+
+  if (whisperProcessor && whisperContext) {
+    whisperProcessor.disconnect();
+    whisperProcessor = null;
+  }
+  if (whisperSource && whisperContext) {
+    whisperSource.disconnect();
+    whisperSource = null;
+  }
+  if (whisperContext) {
+    whisperContext.close().catch(() => {});
+    whisperContext = null;
+  }
+  if (whisperStream) {
+    whisperStream.getTracks().forEach(t => t.stop());
+    whisperStream = null;
+  }
+  whisperChunks = [];
+
+  document.getElementById('listenTranscript').textContent = '—';
+}
+
+function processWhisperChunk() {
+  if (whisperChunks.length === 0) return;
+
+  // Concatenate all chunks into one Float32Array
+  let totalLen = 0;
+  for (const chunk of whisperChunks) totalLen += chunk.length;
+  const combined = new Float32Array(totalLen);
+  let offset = 0;
+  for (const chunk of whisperChunks) {
+    combined.set(chunk, offset);
+    offset += chunk.length;
+  }
+  whisperChunks = []; // clear for next chunk
+
+  // Convert to WAV base64
+  const wavBase64 = encodeWav(combined, 16000);
+
+  // Send to server
+  sendToWhisper(wavBase64);
+}
+
+function sendToWhisper(wavBase64) {
+  if (!wavBase64 || wavBase64.length < 100) return;
+
+  const transDiv = document.getElementById('listenTranscript');
+  transDiv.textContent = '🔄 Transcribiendo...';
+
+  fetch(ASR_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      audio: wavBase64,
+      lang: document.getElementById('listenLang').value.split('-')[0]
+    })
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.error) {
+      console.warn('ASR error:', data.error);
+      return;
+    }
+    const text = data.text || '';
+    const cleanText = text.trim();
+
+    if (cleanText.length < 2) {
+      transDiv.textContent = '🔇 Sin voz detectada';
+      return;
+    }
+
+    transDiv.textContent = '🗣️ ' + cleanText;
+
+    // Auto-send if this is new text (different from last sent)
+    if (cleanText !== lastSentTranscript) {
+      lastSentTranscript = cleanText;
+
+      // Visual feedback
+      document.getElementById('listenIndicator').className = 'listen-indicator speaking';
+      document.getElementById('listenStatusText').textContent = '🗣️ Procesando...';
+      document.getElementById('listeningFlash').className = 'listening-flash speaking';
+
+      // Send to chat
+      sendText(cleanText, true);
+
+      // Restore listening after a moment
+      setTimeout(() => {
+        if (listeningActive) {
+          document.getElementById('listenIndicator').className = 'listen-indicator listening';
+          document.getElementById('listenStatusText').textContent = '🎤 Whisper ASR activo';
+          document.getElementById('listeningFlash').className = 'listening-flash active';
+        }
+      }, 800);
+    }
+  })
+  .catch(err => {
+    console.warn('ASR fetch error:', err);
+    transDiv.textContent = '⚠️ Error de conexión';
+  });
+}
+
+function encodeWav(samples, sampleRate) {
+  // Float32Array → 16-bit PCM WAV (base64)
+  const numChannels = 1;
+  const bitsPerSample = 16;
+  const byteRate = sampleRate * numChannels * bitsPerSample / 8;
+  const blockAlign = numChannels * bitsPerSample / 8;
+  const dataSize = samples.length * blockAlign;
+  const bufferSize = 44 + dataSize;
+
+  const buffer = new ArrayBuffer(bufferSize);
+  const view = new DataView(buffer);
+
+  // WAV header
+  const writeStr = (offset, str) => {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  };
+  writeStr(0, 'RIFF');
+  view.setUint32(4, bufferSize - 8, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  writeStr(36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  // PCM data (float32 → int16)
+  let dataOffset = 44;
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(dataOffset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    dataOffset += 2;
+  }
+
+  // Convert to base64
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+// ═══════════════════════════════════════════════════════════
+// MONITOR POLLING
+// ═══════════════════════════════════════════════════════════
+function formatBytes(mb) {
+  return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : Math.round(mb) + ' MB';
+}
+
+function updateLoadingBar(stats) {
+  const section = document.getElementById('loadingSection');
+  const fill = document.getElementById('loadingFill');
+  const icon = document.getElementById('loadingIcon');
+  const title = document.getElementById('loadingTitle');
+  const status = document.getElementById('loadingStatus');
+  const detail = document.getElementById('loadingDetail');
+  const vramInfo = document.getElementById('loadingVram');
+
+  const connected = stats.llama_connected;
+  const vramMb = stats.vram_used_mb || 0;
+  const vramTotal = stats.vram_total_mb || 6144;
+
+  // ── Initial state tracking ──
+  if (_prevLlamaConnected === null) {
+    _prevLlamaConnected = connected;
+    if (!connected) {
+      section.classList.add('show');
+    }
+  }
+
+  const wasDisconnected = !_prevLlamaConnected && connected;
+  const becameDisconnected = _prevLlamaConnected && !connected;
+  _prevLlamaConnected = connected;
+
+  if (!connected) {
+    // 🟡 Disconnected — show real state, no fake progress
+    section.classList.add('show');
+    icon.textContent = '🚀';
+    title.textContent = 'Esperando servidor';
+    status.textContent = '🟡';
+    detail.textContent = 'llama-server no responde en :8081';
+    fill.className = 'loading-fill waiting';
+    fill.style.width = '100%';
+    vramInfo.textContent = formatBytes(vramMb);
+    return;
+  }
+
+  // ── Connected — check if model is actually loaded ──
+  // Model is loaded when VRAM > 500MB (weights on GPU) OR context is available
+  // 500MB threshold avoids false positives from GPU background processes
+  const vramPct = vramTotal > 0 ? (vramMb / vramTotal) * 100 : 0;
+  const ctxUsed = stats.context_used || 0;
+  const hasModel = vramMb > 500 || ctxUsed > 0;
+  const tps = stats.tokens_per_sec || 0;
+  const isProcessing = stats.is_processing || false;
+
+  // Show loading bar during model initialization (brief window when llama
+  // just connected but model weights haven't loaded into VRAM yet)
+  if (!hasModel) {
+    section.classList.add('show');
+    icon.textContent = '⏳';
+    title.textContent = 'Cargando modelo...';
+    status.textContent = '⏳ ' + vramPct.toFixed(0) + '%';  // real VRAM-based progress
+    detail.textContent = 'VRAM: ' + formatBytes(vramMb) + ' utilizado';
+    fill.className = 'loading-fill loading';
+    fill.style.width = Math.min(vramPct, 95) + '%';  // REAL VRAM percentage
+    vramInfo.textContent = formatBytes(vramMb) + ' / ' + formatBytes(vramTotal);
+    _prevVramMb = vramMb;
+    return;
+  }
+
+  // ── Model loaded — show ready state with real metrics ──
+  // VRAM delta since last poll
+  const vramDelta = Math.abs(vramMb - _prevVramMb);
+  _prevVramMb = vramMb;
+
+  if (!_modelReadyShown) {
+    _modelReadyShown = true;
+    section.classList.add('show');
+    icon.textContent = '✅';
+    title.textContent = 'Modelo listo';
+    status.textContent = '✅';
+    fill.className = 'loading-fill done';
+    fill.style.width = '100%';
+    detail.textContent = tps > 0 ? tps.toFixed(1) + ' tok/s' : 'En espera';
+    vramInfo.textContent = formatBytes(vramMb) + ' / ' + formatBytes(vramTotal);
+
+    // Auto-hide after 4 seconds
+    _loadingTimeoutId = setTimeout(() => {
+      section.classList.remove('show');
+      _loadingTimeoutId = null;
+    }, 4000);
+    return;
+  }
+
+  // ── If already shown, check for VRAM changes (model reload) ──
+  if (_modelReadyShown && vramDelta > 150) {
+    // Model reload detected — real VRAM change
+    _modelReadyShown = false;
+    section.classList.add('show');
+    icon.textContent = '🔄';
+    title.textContent = 'VRAM cambiando';
+    status.textContent = '🔄 ' + vramPct.toFixed(0) + '%';
+    fill.className = 'loading-fill loading';
+    fill.style.width = Math.min(vramPct, 100) + '%';
+    detail.textContent = 'VRAM ' + (vramDelta > 0 ? '▲' : '▼') + formatBytes(vramDelta);
+    vramInfo.textContent = formatBytes(vramMb) + ' / ' + formatBytes(vramTotal);
+  }
+  // Otherwise: hidden (timeout already running or already hidden)
+}
+
+function updateMonitor(stats) {
+  updateLoadingBar(stats);
+
+  const ctxUsed = stats.context_used || 0;
+  const ctxMax = stats.context_max || 4096;
+  const ctxPct = Math.min(stats.context_percent || 0, 100);
+  document.getElementById('ctxFill').style.width = ctxPct + '%';
+  document.getElementById('ctxLabel').textContent = ctxUsed.toLocaleString() + ' / ' + ctxMax.toLocaleString();
+  document.getElementById('ctxPercent').textContent = ctxPct + '%';
+
+  const proc = stats.is_processing;
+  const ctxStatus = document.getElementById('ctxStatus');
+  if (!stats.llama_connected) {
+    ctxStatus.textContent = '● Desconectado';
+    ctxStatus.style.color = 'var(--red)';
+  } else if (proc) {
+    ctxStatus.textContent = '● Generando...';
+    ctxStatus.style.color = 'var(--green)';
+  } else if (ctxUsed > 0) {
+    ctxStatus.textContent = '○ ' + (stats.tokens_generated || 0) + ' tok';
+    ctxStatus.style.color = '';
+  } else {
+    ctxStatus.textContent = '○ Inactivo';
+    ctxStatus.style.color = '';
+  }
+
+  const vramUsed = stats.vram_used_mb || 0;
+  const vramTotal = stats.vram_total_mb || 1;
+  const vramPct = Math.min((vramUsed / vramTotal) * 100, 100);
+  document.getElementById('vramFill').style.width = vramPct + '%';
+  document.getElementById('vramText').textContent = formatBytes(vramUsed) + ' / ' + formatBytes(vramTotal);
+  document.getElementById('vramText').className = 'stat-value' + (vramPct > 90 ? ' red' : vramPct > 70 ? ' yellow' : ' green');
+
+  document.getElementById('ramFill').style.width = Math.min(stats.ram_percent || 0, 100) + '%';
+  document.getElementById('ramText').textContent = (stats.ram_used_gb || '—') + ' / ' + (stats.ram_total_gb || '—') + ' GB';
+
+  const gpuPct = stats.gpu_percent || 0;
+  document.getElementById('gpuFill').style.width = Math.min(gpuPct, 100) + '%';
+  document.getElementById('gpuText').textContent = gpuPct + '%';
+
+  document.getElementById('cpuFill').style.width = Math.min(stats.cpu_percent || 0, 100) + '%';
+  document.getElementById('cpuText').textContent = (stats.cpu_percent || 0) + '%';
+
+  const temp = stats.gpu_temp;
+  document.getElementById('tempText').textContent = temp ? temp + '°C' : '—°C';
+
+  const tps = stats.tokens_per_sec || 0;
+  document.getElementById('tpsText').textContent = (tps > 0 ? tps.toFixed(1) : '0.0') + ' tok/s';
+  document.getElementById('headerTps').textContent = tps > 0 ? tps.toFixed(1) + ' tok/s' : '— tok/s';
+
+  const dot = document.getElementById('statusDot');
+  const st = document.getElementById('statusText');
+  if (!stats.llama_connected) {
+    dot.className = 'status-dot disconnected';
+    st.textContent = '❌ llama-server desconectado';
+  } else if (proc) {
+    dot.className = 'status-dot processing';
+    st.textContent = '🟢 Procesando...';
+  } else {
+    dot.className = 'status-dot idle';
+    st.textContent = '🟣 En espera';
+  }
+  document.getElementById('pollTime').textContent = new Date().toLocaleTimeString();
+}
+
+async function pollStats() {
+  try {
+    const r = await fetch(STATS_URL);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    updateMonitor(await r.json());
+  } catch (e) {
+    document.getElementById('statusDot').className = 'status-dot disconnected';
+    document.getElementById('statusText').textContent = '⚠️ Monitor no disponible';
+    document.getElementById('pollTime').textContent = '—';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════
+setInterval(pollStats, 2000);
+pollStats();
+
+// Preload SpeechSynthesis voices for Japanese
+if ('speechSynthesis' in window) {
+  speechSynthesis.getVoices(); // trigger initial load
+  speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices();
+}
 </script>
 </body>
 </html>

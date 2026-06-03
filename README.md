@@ -54,11 +54,96 @@ URL JSON: https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_ES/shar
 Meter en: models/
 ```
 
+**Descargar voz en inglés (lessac):**
+```
+URL ONNX: https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx
+URL JSON: https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json
+Meter en: models/
+```
+
 **Uso básico de Piper (una vez descargado):**
 ```bash
 bin/piper/piper/piper.exe --model models/es_ES-sharvard-medium.onnx --output_file salida.wav
 # Escribe el texto por stdin y presiona Ctrl+D/Ctrl+Z
 ```
+
+### 🎙️ TTS Multilingüe Inteligente
+
+El sistema detecta automáticamente el idioma de cada oración y cambia la voz TTS según corresponda:
+
+| Idioma | Motor | Modelo de voz |
+|:------:|:-----:|:-------------|
+| **Español** 🇪🇸 | Piper | `es_ES-sharvard-medium` (voz femenina) |
+| **Inglés** 🇺🇸 | Piper | `en_US-lessac-medium` (voz femenina) |
+| **Japonés** 🇯🇵 | SpeechSynthesis (navegador) | Voz JA nativa del sistema |
+
+**Cómo funciona la segmentación:**
+1. Divide el texto por **saltos de línea** (límites fuertes entre idiomas)
+2. Dentro de cada línea, divide por **puntuación final** (`. ! ? ¡ ¿`)
+3. Si una oración mezcla **scripts** (ej. "Hello こんにちは"), se divide carácter por carácter en el punto de transición
+4. Segmentos consecutivos del **mismo idioma** se fusionan para minimizar switches de modelo
+
+**Ejemplo de respuesta multilingüe de Qwen:**
+```
+Input del usuario: "Give me a greeting in three languages"
+
+Respuesta de Qwen:
+  Hello! Good morning!
+  ¡Hola! Buenos días!
+  こんにちは！おはようございます！
+
+Segmentación TTS:
+  [EN] "Hello! Good morning!"       → Piper (voz inglesa)   ✅
+  [ES] "¡Hola! Buenos días!"         → Piper (voz española)  ✅
+  [JA] "こんにちは！おはようございます！"  → SpeechSynthesis JA   ✅
+```
+
+### 🔌 Endpoint `/api/tts-piper`
+
+Endpoint para generar audio TTS con selección explícita de idioma.
+
+**Request:**
+```json
+POST /api/tts-piper
+Content-Type: application/json
+
+{
+  "text": "Texto a sintetizar",
+  "lang": "es"      // "es" | "en" | "auto" (default: auto)
+}
+```
+
+**Response:** `audio/wav` (16-bit mono, 22050 Hz)
+- Header RIFF válido
+- ~80-110 KB por ~3 segundos de audio
+- Latencia: ~200-800ms (según largo del texto)
+
+**Ejemplo con curl:**
+```bash
+# Español
+curl -X POST http://localhost:3000/api/tts-piper \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Hola, como estas hoy?","lang":"es"}' \
+  -o salida_es.wav
+
+# Inglés
+curl -X POST http://localhost:3000/api/tts-piper \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Hello! How are you today?","lang":"en"}' \
+  -o salida_en.wav
+
+# Auto-detect (selecciona modelo según el contenido)
+curl -X POST http://localhost:3000/api/tts-piper \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Buenos dias! Como estas?","lang":"auto"}' \
+  -o salida_auto.wav
+```
+
+**Optimización de latencia:**
+- El endpoint usa stdin/stdout (no archivos temporales) para minimizar I/O
+- Si stdin falla, fallback automático a archivos temporales
+- Consecutive same-language segments se fusionan antes de enviar al TTS
+- Japonés usa SpeechSynthesis del navegador (0ms de latencia de red)
 
 ### 🔊 ASR — Whisper (Opcional)
 **Modelo tiny:**

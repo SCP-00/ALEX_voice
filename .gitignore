@@ -36,6 +36,7 @@ tmp/
 # OS
 .DS_Store
 Thumbs.db
+nul  # Windows reserved name artifact
 
 # IDE
 .idea/
