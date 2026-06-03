@@ -1,5 +1,5 @@
 @echo off
-title Alex Voice — Plan B (GPU+CPU)
+title Alex Voice — Plan C (Full Pipeline)
 setlocal enabledelayedexpansion
 
 :: ── Rutas fijas ──────────────────────────────────────────
@@ -7,15 +7,15 @@ set PYTHON=C:\Users\andyh\AppData\Local\Programs\Python\Python310\python.exe
 set LLAMA_DIR=C:\Users\andyh\Documents\llama-b9479-bin-win-cuda-13.3-x64
 set MODEL_DIR=C:\Users\andyh\.lmstudio\models\khazarai\Qwen3.5-2B-Qwen3.6-plus-Distilled-GGUF
 set MODEL=%MODEL_DIR%\Qwen3.5-2B-Qwen3.6-plus-Distilled-q8_0.gguf
-set PLAN_PORT=3001
-set PLAN_NAME=Plan B
-set SERVER_SCRIPT=%~dp0server.py
+set PLAN_PORT=3000
+set PLAN_NAME=Plan C
+set SERVER_SCRIPT=%~dp0..\server.py
 
 cd /d "%~dp0"
 
 echo =============================================
 echo   Alex Voice — %PLAN_NAME%
-echo   LLM en GPU ^| Kokoro/Piper TTS en CPU
+echo   Pipeline Completo: ASR ^| LLM ^| TTS
 echo   Web UI: http://localhost:%PLAN_PORT%
 echo =============================================
 echo.
