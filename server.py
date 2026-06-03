@@ -698,7 +698,7 @@ class PiperTTS:
 # de audio. Modelo tiny (~75 MB RAM, muy rápido en CPU).
 
 HAVE_FASTER_WHISPER = False
-_asr_model = None
+_asr_models = {}  # model_name -> WhisperModel instance (lazy-loaded)
 _asr_lock = threading.Lock()
 
 
@@ -721,14 +721,41 @@ except ImportError:
     _safe_print("    pip install faster-whisper")
 
 
-def _asr_transcribe(audio_bytes, language="auto"):
+def _get_asr_model(model_name):
+    """Obtiene o carga lazy un modelo Whisper por nombre (tiny/base/small).
+    Thread-safe. Retorna WhisperModel o None si falla.
+    """
+    global _asr_models
+    if model_name in _asr_models:
+        return _asr_models[model_name]
+    with _asr_lock:
+        if model_name in _asr_models:
+            return _asr_models[model_name]
+        try:
+            t0 = time.time()
+            model = WhisperModel(model_name, device="cpu", compute_type="int8")
+            elapsed = (time.time() - t0) * 1000
+            _safe_print(f"  [ASR] faster-whisper {model_name} cargado en {elapsed:.0f}ms")
+            _asr_models[model_name] = model
+            return model
+        except Exception as e:
+            _safe_print(f"  [!] Error cargando faster-whisper {model_name}: {e}")
+            return None
+
+
+def _asr_transcribe(audio_bytes, language="auto", model_name="base"):
     """Transcribe audio WAV usando faster-whisper.
     Retorna (texto, segmentos, error_msg).
     Los primeros 44 bytes son el header WAV, el resto es PCM.
+    
+    Args:
+        audio_bytes: WAV bytes
+        language: codigo de idioma o "auto"
+        model_name: "tiny", "base", o "small"
     """
-    global _asr_model
-    if _asr_model is None:
-        return None, None, "ASR model no cargado"
+    model = _get_asr_model(model_name)
+    if model is None:
+        return None, None, f"ASR model '{model_name}' no disponible"
     try:
         # Parse WAV header para obtener sample_rate
         sample_rate = 16000  # default
@@ -749,7 +776,7 @@ def _asr_transcribe(audio_bytes, language="auto"):
         # Transcribir (thread-safe)
         lang_code = None if language == "auto" else language
         with _asr_lock:
-            segments, info = _asr_model.transcribe(
+            segments, info = model.transcribe(
                 pcm_float32,
                 language=lang_code,
                 beam_size=1,
@@ -1456,13 +1483,16 @@ class Handler(SimpleHTTPRequestHandler):
     def _handle_asr(self, body):
         """Recibe audio WAV, transcribe con faster-whisper y devuelve texto.
         
-        Usa faster-whisper (Python API, modelo tiny en CPU) como método
-        primario. Caída a whisper-cli.exe si faster-whisper no está disponible.
+        Auto-switching de modelos según idioma:
+          - ja  → small (mejor precisión en japonés, 13x mejor que tiny)
+          - es/en → base (equilibrio calidad/velocidad)
+          - auto → base primero, si detecta japonés re-ejecuta con small
+        
+        Caída a whisper-cli.exe si faster-whisper no está disponible.
         
         Input:  {"audio": "base64_wav", "lang": "es|en|ja|auto"}  o raw WAV
         Output: {"text": "...", "segments": [...], "language": "..."}
         """
-        global _asr_model
         project_root = Path(__file__).parent
         whisper_exe = project_root / "bin" / "whisper" / "Release" / "whisper-cli.exe"
         whisper_model_path = project_root / "models" / "ggml-tiny.bin"
@@ -1506,21 +1536,50 @@ class Handler(SimpleHTTPRequestHandler):
         
         file_size = len(raw_audio)
         _safe_print(f"[ASR] {file_size} bytes - transcribiendo...")
-        
-        # ── PRIMARY: faster-whisper (Python API) ──
+        # ── PRIMARY: faster-whisper (Python API, con auto-switching) ──
         text_result = None
         segments_result = None
         error_msg = None
         method_used = "faster-whisper"
         
-        if HAVE_FASTER_WHISPER and _asr_model is not None:
+        if HAVE_FASTER_WHISPER and _get_asr_model("base") is not None:
+            # Elegir modelo inicial según idioma solicitado
+            if lang == "ja":
+                # JA directo con small (mejor precisión)
+                initial_model = "small"
+            else:
+                # ES/EN/auto → base (equilibrio)
+                initial_model = "base"
+            
             try:
-                text_result, segments_result, error_msg = _asr_transcribe(raw_audio, lang)
+                text_result, segments_result, error_msg = _asr_transcribe(raw_audio, lang, initial_model)
             except Exception as e:
                 error_msg = str(e)[:200]
             
+            # Auto-detect: si el resultado tiene caracteres japoneses,
+            # re-ejecutar con small para mejor precisión
+            if text_result and lang == "auto":
+                has_ja = any(
+                    '\u3040' <= c <= '\u309f' or
+                    '\u30a0' <= c <= '\u30ff' or
+                    '\u4e00' <= c <= '\u9fff'
+                    for c in text_result
+                )
+                if has_ja and initial_model != "small":
+                    _safe_print(f"[ASR] Japonés detectado en resultado → re-ejecutando con small")
+                    try:
+                        text_result2, segments_result2, error_msg2 = _asr_transcribe(raw_audio, "ja", "small")
+                        if text_result2:
+                            text_result = text_result2
+                            segments_result = segments_result2
+                            error_msg = None
+                            method_used = "faster-whisper-auto-ja"
+                            _safe_print(f"[ASR] small (JA): {len(text_result)} chars en {(time.time()-t0)*1000:.0f}ms")
+                    except Exception as e2:
+                        _safe_print(f"[ASR] Fallback small falló: {e2}")
+            
             if text_result:
-                _safe_print(f"[ASR] faster-whisper: {len(text_result)} chars en {(time.time()-t0)*1000:.0f}ms")
+                _safe_print(f"[ASR] {initial_model}: {len(text_result)} chars en {(time.time()-t0)*1000:.0f}ms")
         
         # ── FALLBACK: whisper-cli.exe ──
         if not text_result and whisper_exe.exists() and whisper_model_path.exists():
@@ -1732,16 +1791,10 @@ def main():
     _safe_print(f"{'='*50}")
     _safe_print("  Presiona Ctrl+C para detener\n")
 
-    # Inicializar ASR (faster-whisper modelo tiny en CPU)
-    global _asr_model
+    # Inicializar ASR (faster-whisper modelo base en CPU)
+    # tiny, small se cargan lazy cuando se necesiten
     if HAVE_FASTER_WHISPER:
-        try:
-            t0 = time.time()
-            _asr_model = WhisperModel("base", device="cpu", compute_type="int8")
-            _safe_print(f"  [ASR] faster-whisper base cargado en {(time.time()-t0)*1000:.0f}ms")
-        except Exception as e:
-            _safe_print(f"  [!] Error cargando faster-whisper: {e}")
-            _asr_model = None
+        _get_asr_model("base")  # carga inicial del modelo default
     
     # Inicializar PiperTTS (modelos precargados en memoria via Python API)
     global _piper_tts, _piper_es, _piper_en, _piper_exe_path
