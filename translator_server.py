@@ -32,52 +32,125 @@ except ImportError:
     pass
 
 _argos_loaded = False
-_argos_lock = threading.Lock()
+_argos_lock = threading.RLock()  # RLock para permitir llamadas re-entrantes
 
 LANG_MAP = {
     'en': 'English',
     'es': 'Spanish',
     'ja': 'Japanese',
     'fr': 'French',
+    'ko': 'Korean',
+    'zh': 'Chinese',
+    'de': 'German',
+    'pt': 'Portuguese',
 }
 
 ARGOS_CODES = {
     'en': 'en',
     'es': 'es',
     'ja': 'ja',
+    'fr': 'fr',
+    'ko': 'ko',
+    'zh': 'zh',
+    'de': 'de',
+    'pt': 'pt',
 }
 
-def _ensure_argos():
-    """Ensure argos packages are loaded."""
-    global _argos_loaded
-    if _argos_loaded:
+# ── Lazy language pair installer ──
+_argos_pkgs_loaded = False
+
+def _ensure_lang_pair(from_code, to_code):
+    """Ensure a specific argos language pair is installed.
+    Lazy-loads on demand — solo descarga cuando se necesita.
+    """
+    if from_code == to_code:
         return True
+    if not HAVE_ARGOS:
+        return False
+    
+    # Quick check if already installed
+    installed = argostranslate.package.get_installed_packages()
+    if any(p.from_code == from_code and p.to_code == to_code for p in installed):
+        return True
+    
+    # Lazy-download e install (thread-safe con double-check)
     with _argos_lock:
-        if _argos_loaded:
+        # Re-check after acquiring lock
+        installed = argostranslate.package.get_installed_packages()
+        if any(p.from_code == from_code and p.to_code == to_code for p in installed):
             return True
-        if not HAVE_ARGOS:
-            return False
         try:
-            installed = argostranslate.package.get_installed_packages()
-            needed = [('en','es'), ('es','en'), ('en','ja'), ('ja','en')]
-            for fc, tc in needed:
-                found = any(p.from_code == fc and p.to_code == tc for p in installed)
-                if not found:
-                    return False
-            _argos_loaded = True
+            print(f"[Translator] Descargando paquete argos: {from_code}→{to_code}...")
+            available = argostranslate.package.get_available_packages()
+            pkg = next((p for p in available if p.from_code == from_code and p.to_code == to_code), None)
+            if pkg:
+                path = pkg.download()
+                argostranslate.package.install_from_path(path)
+                print(f"[Translator] ✅ Paquete {from_code}→{to_code} instalado")
+                return True
+            else:
+                print(f"[Translator] ⚠️ Paquete {from_code}→{to_code} no disponible en argos")
+                return False
+        except Exception as e:
+            print(f"[Translator] ❌ Error instalando {from_code}→{to_code}: {e}")
+            return False
+
+def _install_core_pairs():
+    """Instalar pares core: EN↔ES, EN↔JA (ES↔JA usa pivote EN)."""
+    global _argos_pkgs_loaded
+    if _argos_pkgs_loaded:
+        return True
+    if not HAVE_ARGOS:
+        return False
+    
+    with _argos_lock:
+        if _argos_pkgs_loaded:
             return True
-        except:
+        try:
+            # Core pairs: EN↔ES, EN↔JA (ES↔JA y JA↔ES usan pivote via EN)
+            core_pairs = [('en','es'), ('es','en'), ('en','ja'), ('ja','en')]
+            ok_count = 0
+            for fc, tc in core_pairs:
+                if _ensure_lang_pair(fc, tc):
+                    ok_count += 1
+            if ok_count >= 4:
+                _argos_pkgs_loaded = True
+                print(f"[Translator] argos: EN↔ES↔JA listo (ES↔JA via pivote EN)")
+            return _argos_pkgs_loaded
+        except Exception as e:
+            print(f"[Translator] Error instalando paquetes core: {e}")
             return False
 
 def translate(text, from_lang, to_lang):
-    """Translate text using argos-translate (CPU)."""
-    if not _ensure_argos():
-        return None, "argos packages not installed"
+    """Translate text using argos-translate (CPU) con lazy-load.
+    
+    Usa traduccion pivote via EN si el par directo no existe
+    (ej: es→ja → es→en→ja).
+    """
+    if not HAVE_ARGOS:
+        return None, "argos-translate not installed"
     try:
         fc = ARGOS_CODES.get(from_lang, from_lang)
         tc = ARGOS_CODES.get(to_lang, to_lang)
-        result = argostranslate.translate.translate(text, fc, tc)
-        return result, None
+        
+        if fc == tc:
+            return text, None
+        
+        # Try direct pair first
+        if _ensure_lang_pair(fc, tc):
+            result = argostranslate.translate.translate(text, fc, tc)
+            return result, None
+        
+        # Pivot via English (fc → en → tc)
+        if _ensure_lang_pair(fc, 'en') and _ensure_lang_pair('en', tc):
+            print(f"[Translator] Usando pivote EN: {fc}→en→{tc}")
+            mid = argostranslate.translate.translate(text, fc, 'en')
+            if not mid:
+                return None, "Pivot translation failed (step 1)"
+            result = argostranslate.translate.translate(mid, 'en', tc)
+            return result, None
+        
+        return None, f"No translation path available for {from_lang}→{to_lang}"
     except Exception as e:
         return None, str(e)[:200]
 
@@ -304,7 +377,7 @@ class TranslatorHandler(SimpleHTTPRequestHandler):
                 "qwen3_loaded": _qwen3_model is not None,
                 "argos_loaded": _argos_loaded,
                 "whisper_loaded": HAVE_WHISPER,
-                "languages": ["en", "es", "ja"],
+                "languages": list(LANG_MAP.keys()),
             })
         elif self.path in ("/", "/index.html"):
             self.path = "/index.html"
@@ -380,6 +453,7 @@ class TranslatorHandler(SimpleHTTPRequestHandler):
                 "to_lang": to_lang,
                 "from_lang_name": LANG_MAP.get(from_lang, from_lang),
                 "to_lang_name": LANG_MAP.get(to_lang, to_lang),
+                "available_languages": list(LANG_MAP.keys()),
                 "translation_time_ms": trans_time,
                 "total_time_ms": total_time,
             })
@@ -497,9 +571,11 @@ def main():
         _get_asr("base")
         print(f"[Translator] faster-whisper base cargado en {time.time()-t0:.1f}s")
     
-    # Pre-load argos
-    if _ensure_argos():
-        print(f"[Translator] argos-translate listo (EN/ES/JA)")
+    # Pre-load core argos pairs
+    if _install_core_pairs():
+        print(f"[Translator] argos core pairs listos (EN↔ES↔JA)")
+    else:
+        print(f"[Translator] argos core pairs incompletos — se cargaran bajo demanda")
     
     # Pre-load Qwen3 (will be slow but first request will be fast)
     print(f"[Translator] Qwen3-TTS se cargara bajo demanda")

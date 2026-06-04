@@ -131,6 +131,11 @@ textarea:focus{border-color:var(--translator);box-shadow:0 0 0 2px rgba(139,92,2
         <option value="en">🇬🇧 Inglés</option>
         <option value="es">🇪🇸 Español</option>
         <option value="ja">🇯🇵 Japonés</option>
+        <option value="fr">🇫🇷 Francés</option>
+        <option value="ko">🇰🇷 Coreano</option>
+        <option value="zh">🇨🇳 Chino</option>
+        <option value="de">🇩🇪 Alemán</option>
+        <option value="pt">🇵🇹 Portugués</option>
       </select>
     </div>
     <button class="swap-btn" onclick="swapLanguages()" title="Intercambiar idiomas">⇄</button>
@@ -140,6 +145,11 @@ textarea:focus{border-color:var(--translator);box-shadow:0 0 0 2px rgba(139,92,2
         <option value="es">🇪🇸 Español</option>
         <option value="en">🇬🇧 Inglés</option>
         <option value="ja">🇯🇵 Japonés</option>
+        <option value="fr">🇫🇷 Francés</option>
+        <option value="ko">🇰🇷 Coreano</option>
+        <option value="zh">🇨🇳 Chino</option>
+        <option value="de">🇩🇪 Alemán</option>
+        <option value="pt">🇵🇹 Portugués</option>
       </select>
     </div>
   </div>
@@ -242,18 +252,28 @@ let convHistory = [];
 let convActivePerson = null;
 let convLocked = false;
 
-// Language map for Qwen3-TTS
+// Language map for Qwen3-TTS (nativo: 10 idiomas, sin costo extra VRAM)
 const LANG_TTS = {
   'en': 'English',
   'es': 'Spanish',
   'ja': 'Japanese',
+  'fr': 'French',
+  'ko': 'Korean',
+  'zh': 'Chinese',
+  'de': 'German',
+  'pt': 'Portuguese',
 };
 
-// Speakers per language
+// Speakers per idioma (Qwen3-TTS-CustomVoice usa descripción de voz)
 const SPEAKERS = {
   'en': 'Vivian',
   'es': 'Serena',
   'ja': 'Ono_Anna',
+  'fr': 'Serena',
+  'ko': 'Ono_Anna',
+  'zh': 'Vivian',
+  'de': 'Serena',
+  'pt': 'Serena',
 };
 
 function setStatus(msg, busy) {
@@ -325,8 +345,8 @@ async function translate() {
     showLoading(false);
     setStatus('✅ Traducido — generando audio...', true);
     
-    // Step 2: Generate TTS audio
-    const ttsLang = LANG_TTS[data.to_lang] || 'Spanish';
+    // Step 2: Generate TTS audio (Qwen3-TTS soporta 10 idiomas nativamente)
+    const ttsLang = LANG_TTS[data.to_lang] || 'English';
     const speaker = SPEAKERS[data.to_lang] || 'Serena';
     
     showLoading(true, 'Generando audio con Qwen3-TTS...');

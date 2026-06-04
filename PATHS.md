@@ -38,10 +38,10 @@
 | **PyTorch** | ✅ | `torch 2.6.0+cu124` |
 | **CUDA soporte** | ✅ | `torch.cuda.is_available() = True` |
 | **GPU detectada** | ✅ | NVIDIA GeForce RTX 3050 6GB Laptop GPU |
-| **CUDA Toolkit (nvcc)** | ❌ | **NO INSTALADO** |
-| **CUDA_PATH / CUDA_HOME** | ❌ | No configuradas |
+| **CUDA Toolkit (nvcc)** | ✅ | `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4\bin\nvcc.exe` |
+| **CUDA_PATH / CUDA_HOME** | ⚠️ | No configuradas en PATH (nvcc existe pero $env:CUDA_PATH no está set) |
 | **xformers** | ✅ | `xformers 0.0.29.post3` (sin Triton en Windows) |
-| **flash-attn** | ❌ | **NO INSTALADO** |
+| **flash-attn** | ❌ | **NO INSTALADO** — necesita `cl.exe` (workload C++ de VS Build Tools) |
 
 ### Atención backend (translator_server.py)
 
@@ -49,6 +49,22 @@ Jerarquía automática en `translator_server.py`:
 1. `flash_attention_2` → si flash-attn instalado
 2. `sdpa` → SDPA nativo de PyTorch 2.0+ (por defecto ✅)
 3. `eager` → fallback manual
+
+### Idiomas disponibles
+
+| Código | Idioma | Traducción | TTS (Qwen3) | ASR (whisper) |
+|:------:|:-------|:----------:|:-----------:|:-------------:|
+| `en` | 🇬🇧 Inglés | ✅ Directo | ✅ Nativo | ✅ 99+ idiomas |
+| `es` | 🇪🇸 Español | ✅ Directo | ✅ Nativo | ✅ |
+| `ja` | 🇯🇵 Japonés | ✅ Directo | ✅ Nativo | ✅ |
+| `fr` | 🇫🇷 Francés | 🔄 Lazy-load | ✅ Nativo | ✅ |
+| `ko` | 🇰🇷 Coreano | 🔄 Lazy-load | ✅ Nativo | ✅ |
+| `zh` | 🇨🇳 Chino | 🔄 Lazy-load | ✅ Nativo | ✅ |
+| `de` | 🇩🇪 Alemán | 🔄 Lazy-load | ✅ Nativo | ✅ |
+| `pt` | 🇵🇹 Portugués | 🔄 Lazy-load | ✅ Nativo | ✅ |
+
+> 🔄 Lazy-load = se descarga el paquete argos solo cuando se usa por primera vez.
+> ES↔JA usa traducción pivote vía EN (argos no tiene el par directo).
 
 ---
 
