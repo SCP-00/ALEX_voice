@@ -335,8 +335,17 @@ SYSTEM_PROMPTS = {
     ),
 }
 
-# ── LRU Cache ──────────────────────────────────────────────
+# ── Cache LRU ──────────────────────────────────────────────
 _cache = ResponseCache(maxsize=200)
+
+# ── Regex para limpiar thinking ────────────────────────────
+THINK_REGEX = re.compile(r'<think>[\s\S]*?</think>\s*')
+
+def _clean_response(text):
+    """Elimina tags de thinking del texto."""
+    cleaned = THINK_REGEX.sub('', text).strip()
+    return cleaned if cleaned else text
+
 _piper_tts = None
 _stats = None
 
@@ -411,6 +420,12 @@ class Handler(SimpleHTTPRequestHandler):
                 with urllib.request.urlopen(req, timeout=120) as resp:
                     result = json.loads(resp.read().decode())
                 content = (result.get("choices", [{}])[0].get("message", {})).get("content", "")
+                # 🧹 STRIP THINKING TAGS
+                content = _clean_response(content)
+                # Actualizar el resultado
+                choices = result.get("choices", [])
+                if choices:
+                    choices[0].get("message", {})["content"] = content
                 if content and len(content) > 20: _cache.put(chat_data.get("messages", []), content)
                 self._json(result)
         except urllib.error.HTTPError as e:

@@ -623,8 +623,14 @@ class Handler(SimpleHTTPRequestHandler):
                 choices = result.get("choices", [])
                 if choices:
                     content = choices[0].get("message", {}).get("content", "")
-                if content and len(content) > 20:
-                    _response_cache.put(chat_data.get("messages", []), content)
+                # 🧹 STRIP THINKING TAGS
+                cleaned = re.sub(r'<think>[\s\S]*?</think>\s*', '', content).strip()
+                if not cleaned:
+                    cleaned = content
+                if choices:
+                    choices[0]["message"]["content"] = cleaned
+                if cleaned and len(cleaned) > 20:
+                    _response_cache.put(chat_data.get("messages", []), cleaned)
                 self._json_response(result)
 
         except urllib.error.HTTPError as e:

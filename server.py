@@ -1235,25 +1235,45 @@ class Handler(SimpleHTTPRequestHandler):
                     return
             
             if chat_data.get("stream"):
-                # Streaming: relay SSE response
+                # Streaming: relay SSE response with thinking tag stripping
                 with urllib.request.urlopen(req, timeout=120) as resp:
-                    # Relay the streaming response headers
                     self.send_response(200)
                     self.send_header("Content-Type", "text/event-stream")
                     self.send_header("Cache-Control", "no-cache")
                     self.send_header("Access-Control-Allow-Origin", "*")
                     self.end_headers()
                     
-                    # Stream chunks directly to client
+                    # Stream chunks, stripping <think> tags in delta.content
+                    buf = b''
                     while True:
                         chunk = resp.read(4096)
                         if not chunk:
                             break
-                        try:
-                            self.wfile.write(chunk)
-                            self.wfile.flush()
-                        except Exception:
-                            break
+                        buf += chunk
+                        # Process complete SSE lines
+                        lines = buf.split(b'\n')
+                        buf = lines.pop()  # keep incomplete line
+                        for line in lines:
+                            if line.startswith(b'data: '):
+                                try:
+                                    # Parse and clean think tags from delta.content
+                                    data_str = line[6:].decode('utf-8', errors='replace').strip()
+                                    if data_str and data_str != '[DONE]':
+                                        import json as _json
+                                        parsed = _json.loads(data_str)
+                                        choices = parsed.get('choices', [])
+                                        if choices and 'delta' in choices[0]:
+                                            delta = choices[0]['delta']
+                                            if 'content' in delta and delta['content']:
+                                                delta['content'] = re.sub(r'<think>[\s\S]*?</think>\s*', '', delta['content']).strip()
+                                        line = b'data: ' + _json.dumps(parsed).encode()
+                                except Exception:
+                                    pass  # passthrough if parsing fails
+                            try:
+                                self.wfile.write(line + b'\n')
+                                self.wfile.flush()
+                            except Exception:
+                                break
             else:
                 # Non-streaming: relay JSON response
                 with urllib.request.urlopen(req, timeout=120) as resp:
@@ -1264,16 +1284,26 @@ class Handler(SimpleHTTPRequestHandler):
                 choices = result.get("choices", [])
                 if choices:
                     content = choices[0].get("message", {}).get("content", "")
+                
+                # 🧹 STRIP THINKING TAGS del contenido (servidor)
+                cleaned = re.sub(r'<think>[\s\S]*?</think>\s*', '', content).strip()
+                if not cleaned:
+                    cleaned = content  # fallback: si no se pudo limpiar, usar original
+                
+                # Actualizar el contenido en el resultado antes de enviar
+                if choices:
+                    choices[0]["message"]["content"] = cleaned
+                
                 usage = result.get("usage", {})
                 token_count = usage.get("completion_tokens", 0)
                 prompt_tokens = usage.get("prompt_tokens", 0)
-                lang_detected = detect_language(content) if content else ""
-                add_log("output", content[:500], mode="plan-a", language=lang_detected,
-                        token_count=token_count, char_count=len(content),
+                lang_detected = detect_language(cleaned) if cleaned else ""
+                add_log("output", cleaned[:500], mode="plan-a", language=lang_detected,
+                        token_count=token_count, char_count=len(cleaned),
                         extra={"prompt_tokens": prompt_tokens})
-                # Cachear respuesta no-streaming para futuros hits
-                if content and len(content) > 20:
-                    _response_cache.put(chat_data.get("messages", []), content)
+                # Cachear respuesta YA LIMPIA para futuros hits
+                if cleaned and len(cleaned) > 20:
+                    _response_cache.put(chat_data.get("messages", []), cleaned)
                 self._json_response(result)
 
         except urllib.error.HTTPError as e:

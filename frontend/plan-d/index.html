@@ -147,11 +147,48 @@ const SYS = {
 INP.addEventListener('input', () => { INP.style.height = '38px'; INP.style.height = Math.min(INP.scrollHeight, 110) + 'px'; });
 INP.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
 
+// ── Push-to-Talk: Space bar ─────────────────────────────
+let _pttActive = false;
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === ' ' && e.target.tagName !== 'TEXTAREA' && e.target.tagName !== 'INPUT' && !e.repeat) {
+    e.preventDefault();
+    if (!_pttActive && !generating) {
+      _pttActive = true;
+      if (recog) {
+        rec = true; MBTN.classList.add('rec');
+        try { recog.start(); } catch(e) { console.warn(e); }
+      }
+      STXT.textContent = '🎤 Push-to-Talk';
+    }
+  }
+});
+
+document.addEventListener('keyup', (e) => {
+  if (e.key === ' ' && _pttActive) {
+    e.preventDefault();
+    _pttActive = false;
+    if (recog) {
+      try { recog.stop(); } catch(e) {}
+      rec = false; MBTN.classList.remove('rec');
+    }
+  }
+});
+
+// ── Mode switching con reseteo de contexto ────────────────
 document.querySelectorAll('.mode-pill').forEach(p => {
   p.addEventListener('click', () => {
     document.querySelectorAll('.mode-pill').forEach(x => x.classList.remove('active'));
-    p.classList.add('active'); mode = p.dataset.mode;
-    msg(`Modo: ${p.textContent.trim()}`, 'system', false);
+    p.classList.add('active');
+    
+    // 🧹 Resetear contexto al cambiar de modo
+    mode = p.dataset.mode;
+    hist = [];  // limpiar historial
+    CHAT.innerHTML = '';  // limpiar chat visual
+    fetch(`${API}/api/cache/clear`).catch(() => {});  // limpiar caché servidor
+    
+    msg(`🔄 Modo: ${p.textContent.trim()} — contexto reiniciado`, 'system', false, false);
+    STXT.textContent = '✅ Contexto reiniciado';
   });
 });
 
