@@ -27,6 +27,43 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 .swap-btn{width:36px;height:36px;border-radius:50%;border:1px solid var(--border);background:var(--surface2);color:var(--textDim);cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;margin-top:16px;transition:all .2s}
 .swap-btn:hover{background:var(--translator);color:#fff;border-color:var(--translator)}
 
+/* Mode selector */
+.mode-row{display:flex;gap:8px;margin-bottom:16px}
+.mode-btn{flex:1;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--textDim);font-family:inherit;font-size:12px;font-weight:500;cursor:pointer;transition:all .2s;text-align:center}
+.mode-btn:hover{border-color:var(--translator);color:var(--text)}
+.mode-btn.active{background:var(--translator);color:#fff;border-color:var(--translator)}
+
+/* Conversation mode (2 people) */
+.conv-ui{display:none;animation:fadeIn .4s}
+.conv-header{margin-bottom:16px}
+.conv-title{font-size:15px;font-weight:600;color:var(--translator)}
+.conv-subtitle{font-size:11px;color:var(--textDim);margin-top:4px}
+.conv-messages{max-height:250px;overflow-y:auto;margin-bottom:12px;padding:8px;background:var(--surface);border-radius:8px;border:1px solid var(--border)}
+.conv-msg{padding:8px 12px;margin-bottom:6px;border-radius:6px;font-size:13px;line-height:1.4;animation:fadeIn .3s}
+.conv-msg .conv-msg-label{font-size:10px;font-weight:600;margin-bottom:2px}
+.conv-msg .conv-msg-text{color:var(--text)}
+.conv-msg .conv-msg-trans{color:var(--translator);font-style:italic;font-size:12px;margin-top:2px}
+.conv-msg.person-a{background:rgba(59,130,246,.1);border-left:2px solid #3b82f6}
+.conv-msg.person-a .conv-msg-label{color:#3b82f6}
+.conv-msg.person-b{background:rgba(139,92,246,.1);border-left:2px solid var(--translator)}
+.conv-msg.person-b .conv-msg-label{color:var(--translator)}
+.conv-controls{display:flex;gap:12px;align-items:stretch}
+.conv-person{flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px;cursor:pointer;transition:all .2s}
+.conv-person:hover{border-color:var(--translator)}
+.conv-person.listening{background:rgba(139,92,246,.15);border-color:var(--translator);animation:convPulse 1.5s infinite}
+@keyframes convPulse{0%,100%{box-shadow:0 0 8px rgba(139,92,246,.2)}50%{box-shadow:0 0 20px rgba(139,92,246,.4)}}
+.conv-person-inner{display:flex;align-items:center;gap:10px}
+.conv-avatar{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#fff;flex-shrink:0}
+.conv-avatar-a{background:#3b82f6}
+.conv-avatar-b{background:var(--translator)}
+.conv-info{flex:1}
+.conv-name{font-size:13px;font-weight:600}
+.conv-lang{font-size:10px;color:var(--textDim)}
+.conv-mic-btn{width:32px;height:32px;border-radius:50%;border:none;background:var(--surface);color:var(--textDim);font-size:14px;cursor:pointer;transition:all .2s}
+.conv-mic-btn:hover{color:var(--text);background:var(--accent)}
+.conv-status{font-size:10px;color:var(--textDim);margin-top:6px;text-align:center}
+.conv-divider{display:flex;align-items:center;font-size:20px;color:var(--textDim);padding:0 4px}
+
 /* Input area */
 .input-area{display:flex;gap:8px;margin-bottom:12px}
 textarea{flex:1;padding:12px 16px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:14px;resize:none;outline:none;min-height:60px;transition:all .2s}
@@ -107,20 +144,60 @@ textarea:focus{border-color:var(--translator);box-shadow:0 0 0 2px rgba(139,92,2
     </div>
   </div>
 
-  <!-- Input -->
-  <div class="input-area">
+  <!-- Mode Selector: Simple vs Conversation (2 personas) -->
+  <div class="mode-row">
+    <button class="mode-btn active" id="modeSimple" onclick="setTranslatorMode('simple')">📝 Simple</button>
+    <button class="mode-btn" id="modeConv" onclick="setTranslatorMode('conversation')">💬 Conversación (2 personas)</button>
+  </div>
+
+  <!-- Input (hidden in conversation mode) -->
+  <div class="input-area" id="simpleInputArea">
     <textarea id="input" placeholder="Escribe o usa el micrófono..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();translate()}"></textarea>
     <button class="mic-btn" id="micBtn" onclick="toggleMic()" title="Grabar voz">🎤</button>
   </div>
   <div class="asr-transcript" id="asrTranscript"></div>
 
-  <!-- Translate Button -->
+  <!-- Translate Button (hidden in conversation mode) -->
   <button class="translate-btn" id="translateBtn" onclick="translate()">🌍 Traducir</button>
 
   <!-- Loading -->
   <div class="loading" id="loading">
     <div class="spinner"></div>
     <span id="loadingText">Traduciendo...</span>
+  </div>
+
+  <!-- Conversation Mode UI (hidden by default) -->
+  <div class="conv-ui" id="convUI" style="display:none">
+    <div class="conv-header">
+      <div class="conv-title">💬 Conversación en vivo</div>
+      <div class="conv-subtitle">Cada persona habla por turnos — el audio se reproduce automáticamente en el idioma contrario</div>
+    </div>
+    <div class="conv-messages" id="convMessages"></div>
+    <div class="conv-controls">
+      <div class="conv-person" id="convPersonA" onclick="startConvTurn('A')">
+        <div class="conv-person-inner">
+          <div class="conv-avatar conv-avatar-a">A</div>
+          <div class="conv-info">
+            <div class="conv-name" id="convNameA">Persona A</div>
+            <div class="conv-lang" id="convLangA">🇪🇸 Español</div>
+          </div>
+          <button class="conv-mic-btn" id="convMicA">🎤</button>
+        </div>
+        <div class="conv-status" id="convStatusA">Toca para hablar</div>
+      </div>
+      <div class="conv-divider">⇄</div>
+      <div class="conv-person" id="convPersonB" onclick="startConvTurn('B')">
+        <div class="conv-person-inner">
+          <div class="conv-avatar conv-avatar-b">B</div>
+          <div class="conv-info">
+            <div class="conv-name" id="convNameB">Persona B</div>
+            <div class="conv-lang" id="convLangB">🇬🇧 Inglés</div>
+          </div>
+          <button class="conv-mic-btn" id="convMicB">🎤</button>
+        </div>
+        <div class="conv-status" id="convStatusB">Esperando...</div>
+      </div>
+    </div>
   </div>
 
   <!-- Result: Original -->
@@ -160,6 +237,10 @@ let mediaRecorder = null;
 let audioChunks = [];
 let isTranslating = false;
 let modelPreloaded = false;
+let translatorMode = 'simple'; // 'simple' | 'conversation'
+let convHistory = [];
+let convActivePerson = null;
+let convLocked = false;
 
 // Language map for Qwen3-TTS
 const LANG_TTS = {
@@ -438,6 +519,194 @@ function blobToBase64(blob) {
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
+}
+
+// ── TRANSLATOR MODE (Simple vs Conversacion 2 personas) ──
+function setTranslatorMode(mode) {
+  translatorMode = mode;
+  document.getElementById('modeSimple').classList.toggle('active', mode === 'simple');
+  document.getElementById('modeConv').classList.toggle('active', mode === 'conversation');
+  
+  if (mode === 'conversation') {
+    document.getElementById('simpleInputArea').style.display = 'none';
+    document.getElementById('translateBtn').style.display = 'none';
+    document.getElementById('convUI').style.display = 'block';
+    document.getElementById('resultOriginal').classList.remove('show');
+    document.getElementById('resultTranslation').classList.remove('show');
+  } else {
+    document.getElementById('simpleInputArea').style.display = 'flex';
+    document.getElementById('translateBtn').style.display = 'block';
+    document.getElementById('convUI').style.display = 'none';
+  }
+}
+
+function startConvTurn(person) {
+  if (convLocked) return;
+  
+  // Use language selectors - Person A speaks FROM lang, Person B speaks TO lang
+  const fromEl = document.getElementById('fromLang');
+  const toEl = document.getElementById('toLang');
+  
+  if (person === 'A') {
+    // Person A speaks the FROM language, gets translated TO
+    fromEl.value = fromEl.value === 'auto' ? 'es' : fromEl.value;
+  } else {
+    // Person B speaks the TO language, gets translated back TO original
+    const temp = fromEl.value;
+    fromEl.value = toEl.value === 'auto' ? 'en' : toEl.value;
+    toEl.value = temp === 'auto' ? 'es' : temp;
+  }
+  
+  // Set visual state
+  document.getElementById('convPersonA').classList.toggle('listening', person === 'A');
+  document.getElementById('convPersonB').classList.toggle('listening', person === 'B');
+  document.getElementById('convStatusA').textContent = person === 'A' ? '🎤 Hablando...' : 'Esperando...';
+  document.getElementById('convStatusB').textContent = person === 'B' ? '🎤 Hablando...' : 'Esperando...';
+  
+  convActivePerson = person;
+  convLocked = true;
+  
+  // Start recording
+  toggleConvMic(person);
+}
+
+async function toggleConvMic(person) {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ 
+      audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 } 
+    });
+    
+    const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+    const chunks = [];
+    
+    recorder.ondataavailable = e => {
+      if (e.data.size > 0) chunks.push(e.data);
+    };
+    
+    recorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      convLocked = false;
+      
+      if (chunks.length === 0) {
+        resetConvUI();
+        return;
+      }
+      
+      const fromLang = document.getElementById('fromLang').value;
+      const toLang = document.getElementById('toLang').value;
+      
+      // Step 1: ASR
+      document.getElementById('convStatus' + person).textContent = '🔄 Transcribiendo...';
+      
+      const blob = new Blob(chunks, { type: 'audio/webm' });
+      const wavBlob = await convertToWav(blob);
+      const base64 = await blobToBase64(wavBlob);
+      
+      const asrR = await fetch(API + '/api/asr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audio: base64, lang: 'auto' }),
+      });
+      const asrData = await asrR.json();
+      
+      if (asrData.error || !asrData.text) {
+        resetConvUI();
+        return;
+      }
+      
+      // Step 2: Translate
+      document.getElementById('convStatus' + person).textContent = '🔄 Traduciendo...';
+      
+      const transR = await fetch(API + '/api/translate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: asrData.text, from_lang: fromLang, to_lang: toLang }),
+      });
+      const transData = await transR.json();
+      
+      if (transData.error) {
+        resetConvUI();
+        return;
+      }
+      
+      // Show in chat
+      addConvMessage(person, asrData.text, transData.translation);
+      
+      // Step 3: TTS
+      document.getElementById('convStatus' + person).textContent = '🔊 Generando audio...';
+      
+      const ttsLang = LANG_TTS[toLang] || 'Spanish';
+      const speaker = SPEAKERS[toLang] || 'Serena';
+      
+      const audioR = await fetch(API + '/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          text: transData.translation, 
+          language: ttsLang,
+          speaker: speaker,
+        }),
+      });
+      
+      if (audioR.ok) {
+        if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
+        currentAudioBlob = await audioR.blob();
+        currentAudioUrl = URL.createObjectURL(currentAudioBlob);
+        const player = document.getElementById('audioPlayer');
+        player.src = currentAudioUrl;
+        player.oncanplaythrough = () => { player.play(); };
+      }
+      
+      document.getElementById('convStatus' + person).textContent = '✅ Hecho — toca para hablar de nuevo';
+      resetConvUI();
+    };
+    
+    recorder.start();
+    const micBtn = person === 'A' ? document.getElementById('convMicA') : document.getElementById('convMicB');
+    micBtn.textContent = '⏹';
+    
+    // Auto-stop after 8 seconds
+    setTimeout(() => {
+      if (recorder.state !== 'inactive') {
+        recorder.stop();
+      }
+    }, 8000);
+    
+    // Stop when clicked again
+    micBtn.onclick = () => {
+      if (recorder.state !== 'inactive') recorder.stop();
+    };
+    
+  } catch (e) {
+    document.getElementById('convStatus' + person).textContent = '❌ Error: ' + e.message;
+    resetConvUI();
+  }
+}
+
+function addConvMessage(person, original, translation) {
+  const container = document.getElementById('convMessages');
+  const msg = document.createElement('div');
+  msg.className = 'conv-msg person-' + person.toLowerCase();
+  msg.innerHTML = 
+    '<div class="conv-msg-label">Persona ' + person + '</div>' +
+    '<div class="conv-msg-text">' + escHtml(original) + '</div>' +
+    '<div class="conv-msg-trans">→ ' + escHtml(translation) + '</div>';
+  container.appendChild(msg);
+  container.scrollTop = container.scrollHeight;
+  convHistory.push({person, original, translation});
+}
+
+function resetConvUI() {
+  document.getElementById('convPersonA').classList.remove('listening');
+  document.getElementById('convPersonB').classList.remove('listening');
+  document.getElementById('convMicA').textContent = '🎤';
+  document.getElementById('convMicB').textContent = '🎤';
+  convLocked = false;
+}
+
+function escHtml(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 // Pre-load Qwen3-TTS in background

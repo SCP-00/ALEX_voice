@@ -82,45 +82,91 @@ def translate(text, from_lang, to_lang):
         return None, str(e)[:200]
 
 
-# ── QWEN3-TTS (GPU) ──
+# ── QWEN3-TTS (GPU, OPTIMIZADO) ──
 HAVE_QWEN3_TTS = False
 _qwen3_model = None
 _qwen3_lock = threading.Lock()
+_qwen3_warmup_done = False
+
+has_flash_attn = False
+try:
+    import flash_attn
+    has_flash_attn = True
+except ImportError:
+    pass
 
 def _load_qwen3():
-    """Lazy-load Qwen3-TTS on GPU."""
-    global _qwen3_model, HAVE_QWEN3_TTS
+    """Lazy-load Qwen3-TTS on GPU con optimizaciones."""
+    global _qwen3_model, HAVE_QWEN3_TTS, _qwen3_warmup_done
     if _qwen3_model is not None:
         return True
     with _qwen3_lock:
         if _qwen3_model is not None:
             return True
         try:
-            import torch
             from qwen_tts import Qwen3TTSModel
             
-            print("[Translator] Cargando Qwen3-TTS-CustomVoice en GPU...")
+            print(f"[Translator] Cargando Qwen3-TTS-CustomVoice en GPU...")
+            if has_flash_attn:
+                print(f"[Translator] flash-attn: DISPONIBLE (aceleracion ~2-3x)")
+            else:
+                print(f"[Translator] flash-attn: NO DISPONIBLE (pip install flash-attn)")
+            
             t0 = time.time()
             _qwen3_model = Qwen3TTSModel.from_pretrained(
                 "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
                 device_map="cuda:0",
                 dtype=torch.bfloat16,
+                attn_implementation="flash_attention_2" if has_flash_attn else "eager",
             )
+            
+            # OPTIMIZATION 1: torch.compile() para acelerar inferencia
+            try:
+                _qwen3_model = torch.compile(_qwen3_model, mode="reduce-overhead")
+                print(f"[Translator] torch.compile aplicado (reduce-overhead)")
+            except Exception as e:
+                print(f"[Translator] torch.compile no disponible: {e}")
+            
+            load_time = time.time() - t0
             vram = torch.cuda.memory_allocated() / 1024**2
-            print(f"[Translator] Qwen3-TTS cargado en {time.time()-t0:.1f}s (VRAM: {vram:.0f}MB)")
+            print(f"[Translator] Modelo cargado en {load_time:.1f}s (VRAM: {vram:.0f}MB)")
+            
+            # OPTIMIZATION 2: Warmup pass para evitar cold-start
+            print(f"[Translator] Ejecutando warmup...")
+            _run_warmup()
+            _qwen3_warmup_done = True
+            
             HAVE_QWEN3_TTS = True
             return True
         except Exception as e:
             print(f"[Translator] Error cargando Qwen3-TTS: {e}")
             return False
 
+def _run_warmup():
+    """Warmup pass: compila kernels CUDA y pre-calcula embeddings."""
+    try:
+        warmup_text = "Warmup."
+        warmup_lang = "English"
+        with torch.inference_mode():
+            wavs, sr = _qwen3_model.generate_custom_voice(
+                text=warmup_text,
+                language=warmup_lang,
+                speaker="Vivian",
+            )
+        del wavs
+        torch.cuda.synchronize()
+        print(f"[Translator] Warmup completo")
+    except Exception as e:
+        print(f"[Translator] Warmup ignorado: {e}")
+
 def _unload_qwen3():
     """Unload Qwen3-TTS from GPU to free VRAM."""
-    global _qwen3_model, HAVE_QWEN3_TTS
+    global _qwen3_model, HAVE_QWEN3_TTS, _qwen3_warmup_done
     with _qwen3_lock:
         if _qwen3_model is not None:
             del _qwen3_model
             _qwen3_model = None
+            _qwen3_warmup_done = False
             HAVE_QWEN3_TTS = False
             gc.collect()
             torch.cuda.empty_cache()
@@ -128,15 +174,17 @@ def _unload_qwen3():
             print("[Translator] Qwen3-TTS descargado de GPU")
 
 def qwen3_synthesize(text, language, speaker='Serena'):
-    """Synthesize speech with Qwen3-TTS."""
+    """Synthesize speech with Qwen3-TTS (optimizado)."""
     if not _load_qwen3():
         return None, "Qwen3-TTS not available"
     try:
-        wavs, sr = _qwen3_model.generate_custom_voice(
-            text=text,
-            language=language,
-            speaker=speaker,
-        )
+        # OPTIMIZATION 3: inference_mode desactiva gradientes
+        with torch.inference_mode():
+            wavs, sr = _qwen3_model.generate_custom_voice(
+                text=text,
+                language=language,
+                speaker=speaker,
+            )
         if wavs and len(wavs) > 0:
             return (wavs[0], sr), None
         return None, "No audio generated"
