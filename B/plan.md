@@ -1,76 +1,77 @@
-# Plan B — LLM on GPU, TTS on CPU ✅ COMPLETADO
+# Plan — Alex Voice (Unificado)
 
 ## Objetivo
-Plan independiente: LLM en GPU con TTS en CPU + ASR en CPU + Caché LRU + Streaming TTS.
-Puerto 3001. No depende de Plan A (puerto 3000).
+Asistente de voz local con 3 modos especializados:
+- **Teacher + Conversation**: Servidor principal con LLM en GPU (puerto 3000)
+- **Translator**: Servidor independiente SIN LLM (puerto 3003)
 
-## Resultados Reales
+## Estado Actual
 
-### LLM — Qwen3.5-2B-Q8 (GPU)
-| Aspecto | Dato |
-|:--------|:----:|
-| Tok/s | 21-22 |
-| VRAM | ~3.0 GB |
-| Prompt Proc | 68 tok/s |
-| API | /chat/completions (OpenAI-compatible) |
+### Servidor Principal (B/server.py, puerto 3000)
 
-### TTS — Piper Python API (CPU)
-| Método | Latencia | Estado |
-|:-------|:--------:|:------:|
-| Piper Python API (piper-tts v1.4.2) | **~45ms** | ✅ Producción |
-| Piper Streaming (chunked transfer) | **~45ms** primer chunk | ✅ Producción |
-| Piper subprocess (fallback) | ~2400ms | ⚠️ Fallback |
+| Componente | Tecnología | Detalle |
+|:-----------|:-----------|:--------|
+| **LLM** | Qwen2.5-1.5B-Q4_K_M (GPU) | ~1.2 GB VRAM, ~20 tok/s |
+| **TTS** | Kokoro-82M (CPU) + Piper (fallback) | Streaming ~100-300ms |
+| **ASR** | faster-whisper base (CPU) | ~36ms |
+| **Caché** | LRU 50 entradas thread-safe | Hit: 0ms |
+| **Prompts** | Inglés (shared/translator.py) | Optimizado para Qwen2.5 |
 
-### ASR — faster-whisper (CPU)
-| Modelo | Latencia | RAM | Uso |
-|:-------|:--------:|:---:|:----|
-| base | ~36ms | 150 MB | ES/EN (default) |
-| small | ~82ms | 500 MB | JA (auto-switch) |
+### Servidor Traductor (translator_server.py, puerto 3003)
 
-### Caché LRU
-| Aspecto | Valor |
-|:--------|:------|
-| Capacidad | 50 entradas |
-| Thread-safe | ✅ Lock |
-| Key | Hash de últimos 4 mensajes (truncados 200 chars) |
-| Hit rate | Variable según patrón de uso |
+| Componente | Tecnología | Detalle |
+|:-----------|:-----------|:--------|
+| **STT** | faster-whisper base (CPU) | ~36ms |
+| **TRANS** | argos-translate (CPU) | 0.5-2.3s EN/ES/JA |
+| **TTS** | Qwen3-TTS-CustomVoice (GPU) | ~2GB VRAM, voces pre-definidas |
 
-## Fases
+### VRAM Budget (RTX 3050 6GB)
 
-### Phase 1 ✅ — Text Core
-- [x] Servidor `B/server.py` (puerto 3001)
-- [x] Chat proxy a llama-server
-- [x] Frontend plan-b con 3 modos
+| Modo | Componentes | VRAM |
+|:-----|:------------|:----:|
+| Teacher/Conversation | Qwen2.5-1.5B + Kokoro (CPU) | **~1.2 GB** ✅ |
+| Translator | Qwen3-TTS-0.6B + argos (CPU) | **~2 GB** ✅ |
+| Ambos simultáneos | — | No recomendado |
 
-### Phase 2 ✅ — CPU TTS
-- [x] Piper Python API funcional (~45ms)
-- [x] Modelos ES y EN cargados en memoria
-- [x] Streaming TTS (raw PCM chunked)
-- [x] Detección automática de idioma
+## Cross-Language (Benchmark 22 pruebas)
 
-### Phase 3 ✅ — Voice Input
-- [x] faster-whisper integrado (base + small)
-- [x] Auto-switch: base (ES/EN), small (JA)
-- [x] Pipeline: Audio → ASR → LLM → TTS
+| Modo | Resultado | Detalle |
+|:-----|:---------:|:--------|
+| **Conversation** | **5/5 (100%)** | EN, ES, JA, FR — respeta idioma del usuario |
+| **Translator** | **10/10 (100%)** | EN-ES, ES-EN, EN-JA, JA-EN, EN-FR, FR-EN, ES-FR, FR-ES, JA-ES, ES-JA |
+| **Teacher** | 4/7 (57%) | Fallos: modelo a veces explica en inglés en vez de idioma objetivo |
 
-### Phase 4 ✅ — Optimization (Completada)
-- [x] Caché LRU de respuestas frecuentes
-- [x] Streaming TTS (primer chunk ~45ms)
-- [x] /api/cache/stats y /api/cache/clear
-- [x] Auto-speak de respuestas cortas en frontend
+## TTFT Benchmark
 
-## Benchmark
+| Escenario | Cold (1ra vez) | Warm (2da vez) |
+|:----------|:--------------:|:--------------:|
+| Prompt corto (30+20 tok) | 0.38s | **0.26s** |
+| Persona (200+40 tok) | 1.38s | **0.41s** |
+| Teacher (~400+80 tok) | 2.27s | **0.43s** |
 
-| Escenario | Latencia | Ganancia |
-|:----------|:--------:|:--------:|
-| Chat con caché (saludos, FAQs) | **0ms** | ∞ |
-| Chat sin caché (LLM GPU) | ~2-5s | — |
-| TTS Piper (modelos en memoria) | **~45ms** | 40-50x vs subprocess |
-| TTS streaming (primer chunk) | **~45ms** | Percepción 0 |
-| ASR ES/EN (base) | **~36ms** | — |
-| ASR JA (small, 1ra vez) | ~1.4s (carga) | 8.6x en 2da vez |
+## Hardware Requerido
 
-## Cómo Ejecutar
-1. Iniciar llama-server con Qwen3.5-2B-Q8 en puerto 8081
-2. `cd B && python server.py` (o doble clic en `Alex_Plan_B.bat` del escritorio)
-3. Abrir `http://localhost:3001`
+| Componente | Mínimo | Recomendado |
+|:-----------|:------:|:-----------:|
+| **GPU** | NVIDIA 4GB VRAM | RTX 3050 6GB / RTX 4060 8GB |
+| **RAM** | 8 GB | 16 GB |
+| **Disco** | 10 GB | 20 GB (modelos) |
+| **SO** | Windows 10/11 | Windows 11 |
+| **CUDA** | 12.4+ | Driver 610+ |
+
+## Archivos del Proyecto
+
+```
+Alex_Voice/
+├── B/server.py              ← Servidor principal (Teacher+Conversation)
+├── translator_server.py      ← Servidor traductor independiente
+├── shared/translator.py      ← Módulo compartido (prompts en inglés, parsing)
+├── frontend/
+│   ├── plan-b/index.html     ← UI de Teacher+Conversation
+│   └── translator/index.html ← UI del Traductor
+├── launcher.py               ← Lanzador unificado
+├── setup.bat                 ← Instalación automática
+├── run.bat                   ← Inicio rápido
+├── CREDITS.md                ← Créditos
+└── LICENSE                   ← MIT
+```

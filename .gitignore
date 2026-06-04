@@ -1,51 +1,18 @@
-# ============================================
-# Alex Voice — .gitignore
-# No subir modelos LLM ni binarios descargables
-# ============================================
+# Benchmark artifacts (generated, not source)
+benchmark_*.json
+benchmark_*.md
+benchmark_report.md
+benchmark_logs.json
+benchmark_*.py
 
-# Modelos GGUF (grandes, descargar manualmente)
-*.gguf
-*.bin
-*.safetensors
-
-# llama.cpp (instalado aparte)
-llama.cpp/
-
-# Piper TTS (binarios descargables)
-bin/piper/*.dll
-bin/piper/*.exe
-bin/piper/espeak-ng-data/
-bin/piper/libtashkeel*
-bin/piper/*.ort
-bin/piper/piper/
-bin/piper/piper_phonemize*
-
-# Whisper
-models/ggml-*.bin
-
-# Descargas
-*.zip
-*.tar.gz
-
-# Cache y temporales
-/tmp/
-tmp/
-*.log
-*.cache
-
-# OS
-.DS_Store
-Thumbs.db
-nul  # Windows reserved name artifact
-
-# IDE
-.idea/
-.vscode/
-*.swp
-
-# Python
+# Python cache
 __pycache__/
 *.pyc
-*.pyo
-venv/
-.env
+
+# Temp files
+*.tmp
+*.log
+
+# OS files
+Thumbs.db
+.DS_Store

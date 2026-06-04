@@ -1,262 +1,286 @@
 # 🎙️ Alex Voice — Asistente Local con IA Multilingüe
 
-Asistente de voz con inteligencia artificial que corre **100% local** en tu PC.
-Soporta **Español, Inglés y Japonés** con 3 modos de interacción:
-🎓 Teacher (enseñanza), 💬 Conversación (charla libre), 🌍 Traductor (ES/EN/JA).
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
+[![CUDA](https://img.shields.io/badge/CUDA-12.4-green)](https://developer.nvidia.com/cuda-toolkit)
+
+**Alex Voice** es un asistente de voz con inteligencia artificial que corre **100% local** en tu PC con GPU NVIDIA. Soporta **Español, Inglés y Japonés** con 3 modos de interacción especializados.
+
+Creado por [SCP-076](https://github.com/SCP-00) · Coded with ❤️ by [Buffy](https://codebuff.com) (AI Agent)
+
+---
 
 ## 🚀 Inicio Rápido
 
+### Opción 1: Script automático (recomendado)
+
 ```bash
-# 1. Clonar el repositorio
-git clone https://github.com/SCP-00/Alex_Voice.git
-cd Alex_Voice
-
-# 2. Descargar los modelos necesarios (ver sección Modelos)
-# 3. Iniciar el servidor
-./start_server.sh        # Git Bash
-start_server.bat         # Windows (doble clic)
-
-# 4. Abrir el navegador en frontend/plan-a/index.html
+# 1. Descarga el ZIP desde GitHub
+# 2. Ejecuta setup.bat (descarga e instala todo automáticamente)
+# 3. Ejecuta run.bat y selecciona el modo deseado
 ```
 
-## 📦 Modelos — Descargar Manualmente
+### Opción 2: Manual
 
-No se incluyen modelos en el repositorio por su tamaño.
-Debes descargarlos y colocarlos en las rutas indicadas.
-
-### 🤖 LLM (Requerido)
-**Recomendado:** `Qwen3.5-2B-Q8` (~2 GB)
-
-```
-URL: https://huggingface.co/khazarai/Qwen3.5-2B-Qwen3.6-plus-Distilled-GGUF
-Archivo: Qwen3.5-2B-Qwen3.6-plus-Distilled-q8_0.gguf
-Meter en: C:\Users\<tu_usuario>\.lmstudio\models\khazarai\Qwen3.5-2B-Qwen3.6-plus-Distilled-GGUF\
-```
-
-**Alternativas probadas:**
-| Modelo | Tamaño | Velocidad | VRAM |
-|--------|:------:|:---------:|:----:|
-| Qwen3.5-2B-Q8 | ~2.0 GB | **21-22 tok/s** | ~3.0 GB |
-| Gemma-4-E2B-Q4 | ~3.2 GB | **24.3 tok/s** | ~3.5 GB |
-| DeepSeek-R1-8B-Q4 | ~4.7 GB | 8.9 tok/s | ~5.0 GB |
-
-### 🗣️ TTS — Piper (Recomendado)
-**Descargar ejecutable:**
-```
-URL: https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip
-Extraer en: bin/piper/  (el .exe queda en bin/piper/piper/piper.exe)
-```
-
-**Descargar voz en español (sharvard):**
-```
-URL ONNX: https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_ES/sharvard/medium/es_ES-sharvard-medium.onnx
-URL JSON: https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_ES/sharvard/medium/es_ES-sharvard-medium.onnx.json
-Meter en: models/
-```
-
-**Descargar voz en inglés (lessac):**
-```
-URL ONNX: https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx
-URL JSON: https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json
-Meter en: models/
-```
-
-**Uso básico de Piper (una vez descargado):**
 ```bash
-bin/piper/piper/piper.exe --model models/es_ES-sharvard-medium.onnx --output_file salida.wav
-# Escribe el texto por stdin y presiona Ctrl+D/Ctrl+Z
+# Requisitos: Python 3.10+, CUDA 12.4+, GPU NVIDIA 4GB+
+
+# 1. Instalar dependencias
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+pip install argostranslate faster-whisper qwen-tts
+
+# 2. Descargar llama-server desde:
+#    https://github.com/ggml-org/llama.cpp/releases
+
+# 3. Descargar modelo Qwen2.5-1.5B-Q4_K_M (~1.1GB):
+#    https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF
+
+# 4. Iniciar
+python launcher.py                    # Teacher + Conversation (puerto 3000)
+python translator_server.py           # Traductor (puerto 3003)
 ```
 
-### 🎙️ TTS Multilingüe Inteligente
+---
 
-El sistema detecta automáticamente el idioma de cada oración y cambia la voz TTS según corresponda:
+## 🏗️ Arquitectura
 
-| Idioma | Motor | Modelo de voz |
-|:------:|:-----:|:-------------|
-| **Español** 🇪🇸 | Piper | `es_ES-sharvard-medium` (voz femenina) |
-| **Inglés** 🇺🇸 | Piper | `en_US-lessac-medium` (voz femenina) |
-| **Japonés** 🇯🇵 | SpeechSynthesis (navegador) | Voz JA nativa del sistema |
-
-**Cómo funciona la segmentación:**
-1. Divide el texto por **saltos de línea** (límites fuertes entre idiomas)
-2. Dentro de cada línea, divide por **puntuación final** (`. ! ? ¡ ¿`)
-3. Si una oración mezcla **scripts** (ej. "Hello こんにちは"), se divide carácter por carácter en el punto de transición
-4. Segmentos consecutivos del **mismo idioma** se fusionan para minimizar switches de modelo
-
-**Ejemplo de respuesta multilingüe de Qwen:**
 ```
-Input del usuario: "Give me a greeting in three languages"
-
-Respuesta de Qwen:
-  Hello! Good morning!
-  ¡Hola! Buenos días!
-  こんにちは！おはようございます！
-
-Segmentación TTS:
-  [EN] "Hello! Good morning!"       → Piper (voz inglesa)   ✅
-  [ES] "¡Hola! Buenos días!"         → Piper (voz española)  ✅
-  [JA] "こんにちは！おはようございます！"  → SpeechSynthesis JA   ✅
+┌─────────────────────────────────────────────────────────────┐
+│                    ALEX VOICE                                │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌─────────────────────┐    ┌──────────────────────────┐    │
+│  │  Teacher + Conv     │    │  Translator               │    │
+│  │  (puerto 3000)      │    │  (puerto 3003)            │    │
+│  │                     │    │                          │    │
+│  │  LLM: Qwen2.5-1.5B │    │  STT: faster-whisper CPU  │    │
+│  │  TTS: Kokoro/Piper  │    │  TRANS: argos CPU        │    │
+│  │  ASR: faster-w      │    │  TTS: Qwen3-TTS GPU      │    │
+│  │  Caché: LRU 50      │    │  SIN LLM                 │    │
+│  └─────────────────────┘    └──────────────────────────┘    │
+│                                                             │
+│  ┌──────────────────────────────────────────────────┐       │
+│  │  llama-server (GPU, puerto 8081)                  │       │
+│  │  Qwen2.5-1.5B-Q4_K_M ~1.2GB VRAM                  │       │
+│  └──────────────────────────────────────────────────┘       │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### 🔌 Endpoint `/api/tts-piper`
+---
 
-Endpoint para generar audio TTS con selección explícita de idioma.
+## 🎯 Modos de Uso
 
-**Request:**
-```json
-POST /api/tts-piper
-Content-Type: application/json
+### 🎓 Teacher
+Enseñanza de idiomas con explicaciones estructuradas.
+- Formato multi-output: 【TEXT】/【PRONUNCIATION】/【TRANSLATION】/【EXPLANATION】/【EXERCISE】
+- TTS solo lee 【TEXT】 — pronunciación y traducción se ven en pantalla
+- Ideal para aprender vocabulario y gramática
 
-{
-  "text": "Texto a sintetizar",
-  "lang": "es"      // "es" | "en" | "auto" (default: auto)
-}
-```
+### 💬 Conversation
+Charla natural para practicar idiomas.
+- Responde SIEMPRE en el mismo idioma que escribes
+- Cross-language probado: EN, ES, JA, FR
+- 100% de acierto en benchmarks
 
-**Response:** `audio/wav` (16-bit mono, 22050 Hz)
-- Header RIFF válido
-- ~80-110 KB por ~3 segundos de audio
-- Latencia: ~200-800ms (según largo del texto)
+### 🌍 Translator (servidor independiente)
+Traducción profesional con audio de alta calidad.
+- **STT:** faster-whisper (CPU) — reconocimiento de voz
+- **TRANS:** argos-translate (CPU) — traducción offline EN/ES/JA
+- **TTS:** Qwen3-TTS-CustomVoice (GPU) — audio natural con voces pre-definidas
+- Selector manual de idiomas FROM/TO
+- Sin LLM — servicio ligero y especializado
 
-**Ejemplo con curl:**
-```bash
-# Español
-curl -X POST http://localhost:3000/api/tts-piper \
-  -H "Content-Type: application/json" \
-  -d '{"text":"Hola, como estas hoy?","lang":"es"}' \
-  -o salida_es.wav
+---
 
-# Inglés
-curl -X POST http://localhost:3000/api/tts-piper \
-  -H "Content-Type: application/json" \
-  -d '{"text":"Hello! How are you today?","lang":"en"}' \
-  -o salida_en.wav
+## 📊 VRAM Usage
 
-# Auto-detect (selecciona modelo según el contenido)
-curl -X POST http://localhost:3000/api/tts-piper \
-  -H "Content-Type: application/json" \
-  -d '{"text":"Buenos dias! Como estas?","lang":"auto"}' \
-  -o salida_auto.wav
-```
+| Modo | Componentes | VRAM |
+|:-----|:------------|:----:|
+| **Teacher/Conversation** | Qwen2.5-1.5B (GPU) + Kokoro (CPU) | **~1.2 GB** |
+| **Translator** | Qwen3-TTS-0.6B (GPU) + argos (CPU) | **~2.0 GB** |
+| Ambos simultáneos | — | No recomendado |
 
-**Optimización de latencia:**
-- El endpoint usa stdin/stdout (no archivos temporales) para minimizar I/O
-- Si stdin falla, fallback automático a archivos temporales
-- Consecutive same-language segments se fusionan antes de enviar al TTS
-- Japonés usa SpeechSynthesis del navegador (0ms de latencia de red)
+### RTX 4060 8GB — Cabe todo sobrado
+- LLM: ~1.2 GB
+- Qwen3-TTS: ~2.0 GB
+- Libre: ~4.8 GB ✅
 
-### 🔊 ASR — Whisper (Opcional)
-**Modelo tiny:**
-```
-URL: https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
-Meter en: models/ggml-tiny.bin
-```
-**Nota:** whisper.cpp necesita compilarse desde source (no hay .exe precompilado oficial para Windows).
-Alternativa: `pip install faster-whisper` (Python) para ASR sin compilar.
+---
 
-**Descargar whisper.cpp (para compilar):**
-```
-URL: https://github.com/ggml-org/whisper.cpp
-```
+## ⚡ Benchmarks
 
-### 🎵 TTS Alternativo — OuteTTS (Experimental)
-```
-URL: https://huggingface.co/OuteAI/OuteTTS-0.2-500M-GGUF/resolve/main/OuteTTS-0.2-500M-Q4_K_M.gguf
-Meter en: models/OuteTTS-0.2-500M-Q4_K_M.gguf
-```
+### TTFT (Time to First Token)
 
-## 🔧 Requisitos de Hardware
+| Escenario | Cold (1ra vez) | Warm (2da vez) |
+|:----------|:--------------:|:--------------:|
+| Prompt corto | 0.38s | **0.26s** |
+| Persona (~200 tok) | 1.38s | **0.41s** |
+| Teacher (~500 tok) | 2.27s | **0.43s** |
+
+### Cross-Language (22 pruebas)
+
+| Modo | Aciertos | Tiempo |
+|:-----|:--------:|:------:|
+| **Conversation** | **5/5 (100%)** | 4.07s |
+| **Translator** | **10/10 (100%)** | 3.14s |
+| **Teacher** | 4/7 (57%) | 4.96s |
+
+### Traducción argos-translate (CPU)
+
+| Par | Tiempo | Resultado |
+|:----|:------:|:----------|
+| EN→ES | **2.3s** | Hola, ¿cómo estás? |
+| ES→EN | **1.2s** | Good morning how are you? |
+| EN→JA | **0.5s** | アニメが好き |
+
+### Qwen3-TTS (GPU, 2GB VRAM)
+
+| Idioma | Generación | Audio | Velocidad |
+|:-------|:----------:|:-----:|:---------:|
+| Inglés (Vivian) | 8.65s | 2.9s | ~3x RT |
+| Español (Serena) | 7.02s | 2.7s | ~2.6x RT |
+
+---
+
+## 🔧 Requisitos
+
+### Hardware
 
 | Componente | Mínimo | Recomendado |
-|:----------:|:------:|:-----------:|
-| **GPU** | NVIDIA 4 GB VRAM | RTX 3050 6GB |
+|:-----------|:------:|:-----------:|
+| **GPU** | NVIDIA 4GB VRAM | RTX 3050 6GB / RTX 4060 8GB |
 | **RAM** | 8 GB | 16 GB |
-| **Disco** | 10 GB libres | 50 GB libres |
+| **Disco** | 10 GB libres | 20 GB libres |
 | **SO** | Windows 10/11 | Windows 11 |
+| **CUDA Driver** | 12.4+ | Driver 610+ |
 
-Probado en: **RTX 3050 6GB Laptop** · **i5-13420H** · **16 GB RAM**
-VRAM usable: **5.28 GB** · Velocidad de descarga: ~3 MB/s
+### Software
 
-## 🏗️ Planes Disponibles
+| Herramienta | Versión | Instalación |
+|:------------|:-------:|:------------|
+| Python | 3.10+ | [python.org](https://www.python.org/) |
+| CUDA Toolkit | 12.4 | `pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124` |
+| llama.cpp | b9479+ | Descargar de [GitHub Releases](https://github.com/ggml-org/llama.cpp/releases) |
+| Git | Cualquiera | [git-scm.com](https://git-scm.com/) (opcional) |
 
-Cada plan tiene su propia interfaz HTML en `frontend/plan-*/index.html`
+### Python Dependencies
 
-| Plan | Arquitectura | Tema |
-|:----:|:------------|:----:|
-| **A** 🟣 | LLM + TTS en GPU (recomendado) | Purple neon |
-| **B** 🔵 | LLM en GPU, TTS en CPU | Blue tech |
-| **C** 🟢 | Pipeline completo ASR→LLM→TTS | Green cyber |
-| **D** 🟡 | Arquitectura ganadora (Plan A) | Gold premium |
+```bash
+# Core
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
 
-### 🎯 Recomendación Final
-**Qwen3.5-2B-Q8** (GPU) + **OuteTTS-500M** (GPU) = ~3.5 GB VRAM total.
-Cabe todo en GPU. Sin swapping. 21 tok/s.
+# Traducción (CPU)
+pip install argostranslate
 
-## 🖥️ Cómo Usar
+# TTS calidad (GPU)
+pip install qwen-tts
 
-1. **Editar rutas en scripts de inicio** (solo la primera vez):
-   Los scripts `start_server.sh` y `start_server.bat` contienen rutas absolutas.
-   Edítalos para que apunten a la ubicación de tu modelo GGUF.
+# Reconocimiento de voz (CPU)
+pip install faster-whisper
 
-   ```bash
-   # Ejemplo (start_server.sh):
-   MODEL="/ruta/a/tu/modelo.gguf"
-   ```
+# TTS ligero (opcional, para Teacher/Conversation)
+pip install kokoro
 
-2. **Iniciar el servidor:**
-   ```bash
-   ./start_server.sh   # Git Bash
-   # o doble clic en start_server.bat (Windows)
-   ```
-   Esto levanta `llama-server.exe` con el modelo en puerto 8080.
+# Utilidades
+pip install psutil pynvml numpy transformers
+```
 
-3. **Abrir la interfaz:**
-   - Plan A (recomendado): `frontend/plan-a/index.html`
-   - Plan B (fallback TTS CPU): `frontend/plan-b/index.html`
-   - Plan C (pipeline completo): `frontend/plan-c/index.html`
-   - Plan D (recomendación final): `frontend/plan-d/index.html`
-
-3. **Seleccionar modo:**
-   - 🎓 **Teacher:** Explicaciones detalladas, tono educativo
-   - 💬 **Conversación:** Charla natural y fluida
-   - 🌍 **Traductor:** ES ↔ EN ↔ JA con romaji
-
-## 🛡️ Seguridad
-
-Todo comando que toque la GPU se ejecuta dentro de **tmux** para
-proteger el proceso principal (`freebuff.exe`). Ver `AGENT.md`.
+---
 
 ## 📁 Estructura del Proyecto
 
 ```
 Alex_Voice/
-├── A/                  # Plan A - Combined LLM+TTS GPU
-│   ├── README.md, plan.md, AGENT.md
-├── B/                  # Plan B - LLM GPU, TTS CPU
-├── C/                  # Plan C - Pipeline completo
-├── D/                  # Plan D - Recomendación final
+│
+├── B/
+│   ├── server.py              ← Servidor Teacher+Conversation (puerto 3000)
+│   ├── AGENT.md               ← Instrucciones del agente
+│   ├── plan.md                ← Plan de implementación
+│   └── README.md              ← Documentación del servidor
+│
+├── shared/
+│   └── translator.py          ← Módulo compartido (prompts en inglés, parsing multi-output)
+│
 ├── frontend/
-│   ├── plan-a/         # Interfaz Plan A (purple)
-│   ├── plan-b/         # Interfaz Plan B (blue)
-│   ├── plan-c/         # Interfaz Plan C (green)
-│   └── plan-d/         # Interfaz Plan D (gold)
-├── bin/
-│   └── piper/          # Piper TTS ejecutable
-├── models/             # Modelos descargados
-├── start_server.sh     # Inicio (Git Bash)
-├── start_server.bat    # Inicio (Windows)
-└── AGENT.md            # Reglas de seguridad
+│   ├── plan-b/
+│   │   └── index.html         ← UI de Teacher+Conversation
+│   └── translator/
+│       └── index.html         ← UI del Traductor
+│
+├── translator_server.py       ← Servidor traductor (puerto 3003)
+├── launcher.py                ← Lanzador unificado (inicia todo)
+│
+├── setup.bat                  ← Instalación automática
+├── run.bat                    ← Inicio rápido (menú interactivo)
+│
+├── CREDITS.md                 ← Créditos del proyecto
+├── LICENSE                    ← Licencia MIT
+└── README.md                  ← Esta documentación
 ```
 
-## 📊 Benchmarks (Hardware Real)
+---
 
-| Modelo | Tok/s | VRAM | Prompt |
-|--------|:-----:|:----:|:------:|
-| Qwen3.5-2B-Q8 | 21-22 | ~3.0 GB | 68 tok/s |
-| Gemma-4-E2B-Q4 | 24.3 | ~3.5 GB | 109 tok/s |
-| DeepSeek-R1-8B-Q4 | 8.9 | ~5.0 GB | 5.1 tok/s |
+## 🔌 API Endpoints
 
-## 🌐 Idiomas Verificados
-- ✅ **Español** — Conversación natural, responde en español
-- ✅ **Inglés** — Soporte nativo del modelo
-- ✅ **Japonés** — Caracteres kanji/hiragana/katakana correctos
+### Servidor Principal (`localhost:3000`)
+
+| Endpoint | Método | Descripción |
+|:---------|:------:|:------------|
+| `/api/chat` | POST | Chat con modo (teacher/conversation) + multi-output |
+| `/api/tts` | POST | TTS Kokoro → Piper (fallback) |
+| `/api/tts/stream` | POST | TTS streaming |
+| `/api/asr` | POST | Reconocimiento de voz |
+| `/api/stats` | GET | Estadísticas en vivo (GPU/CPU/RAM) |
+| `/api/cache/stats` | GET | Estadísticas de caché LRU |
+| `/api/cache/clear` | GET | Limpiar caché |
+
+### Servidor Traductor (`localhost:3003`)
+
+| Endpoint | Método | Descripción |
+|:---------|:------:|:------------|
+| `/api/translate` | POST | Traducir texto (from_lang, to_lang, text) |
+| `/api/tts` | POST | Audio Qwen3-TTS (text, language, speaker) |
+| `/api/asr` | POST | Reconocimiento de voz |
+| `/api/load` | POST | Precargar Qwen3-TTS en GPU |
+| `/api/unload` | POST | Descargar Qwen3-TTS de GPU |
+| `/api/status` | GET | Estado del servidor |
+
+---
+
+## 🧪 Benchmarks Realizados
+
+| Benchmark | Archivo | Resultado |
+|:----------|:--------|:----------|
+| TTFT (tiempos reales) | `benchmark_ttft_real.py` | ~0.4s warm, ~2.3s cold |
+| Cross-language matrix | `benchmark_crosslang.py` | 19/22 tests (86%) |
+| Qwen3-TTS + NLLB | `benchmark_qwen3_nllb.py` | Qwen3-TTS 2GB VRAM ✅ |
+| Planes A/B/C/D | `benchmark_plans_completo.py` | B y C ganadores (6/9) |
+
+---
+
+## 🤝 Contribuir
+
+1. Fork el proyecto
+2. Crea tu rama (`git checkout -b feature/mejora`)
+3. Commit (`git commit -am 'feat: mejora'`)
+4. Push (`git push origin feature/mejora`)
+5. Abre un Pull Request
+
+---
+
+## 📝 Licencia
+
+Este proyecto está bajo licencia MIT. Ver [LICENSE](LICENSE) para más detalles.
+
+## 👤 Autor
+
+**SCP-076** (Victor Buendia)
+
+## 🤖 Créditos
+
+Coded with ❤️ by **Buffy** — Asistente estratégico basado en DeepSeek-v4-flash.
+[Codebuff](https://codebuff.com) · Arquitectura, implementación y optimización.
+
+---
+
+*Alex Voice — Asistente Local con IA Multilingüe · 2026*
