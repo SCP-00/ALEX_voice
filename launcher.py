@@ -22,7 +22,7 @@ from datetime import datetime
 PROJECT_ROOT = Path(__file__).parent.resolve()
 LLAMA_DIR = Path(r"C:\Users\andyh\Documents\llama-b9479-bin-win-cuda-13.3-x64")
 MODEL_DIR_Q8 = Path(r"C:\Users\andyh\.lmstudio\models\khazarai\Qwen3.5-2B-Qwen3.6-plus-Distilled-GGUF")
-MODEL_DIR_Q4 = Path(r"C:\Users\andyh\.lmstudio\models\Qwen\Qwen3-2B-Instruct-GGUF")
+MODEL_DIR_Q4 = Path(r"C:\Users\andyh\.lmstudio\models\Qwen\Qwen2.5-1.5B-Instruct-GGUF")
 PYTHON_EXE = Path(r"C:\Users\andyh\AppData\Local\Programs\Python\Python310\python.exe")
 LLAMA_PORT = 8081
 LLAMA_HOST = f"http://localhost:{LLAMA_PORT}"
@@ -46,7 +46,7 @@ def log(msg):
 
 def find_model():
     """Elige el mejor modelo disponible. Prioridad: Q4_K_M > Q8."""
-    q4_path = MODEL_DIR_Q4 / "qwen3-2b-instruct-q4_k_m.gguf"
+    q4_path = MODEL_DIR_Q4 / "qwen2.5-1.5b-instruct-q4_k_m.gguf"
     q8_path = MODEL_DIR_Q8 / "Qwen3.5-2B-Qwen3.6-plus-Distilled-q8_0.gguf"
 
     # Buscar recursivamente archivos .gguf en los directorios
@@ -54,9 +54,9 @@ def find_model():
     q8_alternatives = list(MODEL_DIR_Q8.glob("*.gguf")) if MODEL_DIR_Q8.exists() else []
 
     if q4_path.exists():
-        return q4_path, "Qwen3-2B-Q4_K_M", 8192
+        return q4_path, "Qwen2.5-1.5B-Q4_K_M", 8192
     if q4_alternatives:
-        return q4_alternatives[0], f"Qwen3 (Q4, {q4_alternatives[0].name})", 8192
+        return q4_alternatives[0], f"Qwen2.5 (Q4, {q4_alternatives[0].name})", 8192
     if q8_path.exists():
         return q8_path, "Qwen3.5-2B-Q8", 4096
     if q8_alternatives:
@@ -259,7 +259,7 @@ def print_banner(plan_name, port, model_label, ctx_size, plan_info=""):
         eprint(f"  Debug:       http://localhost:{port}/debug")
     eprint(f"  llama-server: {LLAMA_HOST}")
     eprint(f"  Modelo:      {model_label} ({ctx_size} ctx)")
-    eprint(f"  GPU VRAM:    ~{1.5 if 'Q4' in model_label else 3.0} GB de 5.28 GB")
+    eprint(f"  GPU VRAM:    ~{1.2 if 'Q4' in model_label else 3.0} GB de 5.28 GB")
     eprint(f"  TTS:         Kokoro-82M + Piper (CPU)")
     eprint(f"  ASR:         faster-whisper (CPU)")
     eprint("=" * width)
@@ -348,8 +348,8 @@ def main():
     if model_path is None:
         log("  ❌ No se encontró ningún modelo GGUF.")
         log("     Descarga uno desde:")
-        log("     • Qwen3-2B Q4_K_M (recomendado, ~1.5GB):")
-        log("       https://huggingface.co/Qwen/Qwen3-2B-Instruct-GGUF")
+        log("     • Qwen2.5-1.5B Q4_K_M (recomendado, ~1.1GB):")
+        log("       https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF")
         eprint()
         input("  Presiona Enter para salir...")
         sys.exit(1)
