@@ -88,15 +88,20 @@ echo   Instalando kokoro + utilidades...
 pip install kokoro psutil pynvml -q 2>&1 | findstr /i "successfully" >nul
 echo   ✅ kokoro, psutil, pynvml
 
-echo   Instalando flash-attn (opcional, acelera Qwen3-TTS)...
+echo   Instalando xformers (atención optimizada para Windows)...
+pip install xformers -q 2>&1 | findstr /i "successfully" >nul
+if %errorlevel% equ 0 (
+    echo   ✅ xformers (atención optimizada, alternativa Windows a flash-attn)
+) else (
+    echo   ⚠️  xformers no disponible (se usara SDPA nativo de PyTorch)
+)
+
+echo   Instalando flash-attn (opcional, solo si tienes CUDA toolkit)...
 pip install flash-attn --no-build-isolation -q 2>&1 | findstr /i "successfully" >nul
 if %errorlevel% equ 0 (
     echo   ✅ flash-attn (Qwen3-TTS acelerado ~2x)
 ) else (
-    echo   ⚠️  flash-attn no disponible (sin CUDA toolkit)
-    echo   Para instalarlo manualmente, ejecuta este PowerShell como Admin:
-    echo   ^> $env:CUDA_PATH="C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4"
-    echo   ^> pip install flash-attn --no-build-isolation
+    echo   ⚠️  flash-attn no disponible (sin CUDA toolkit para compilar)
 )
 
 :: Install argos language packages

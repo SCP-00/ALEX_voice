@@ -88,10 +88,21 @@ _qwen3_model = None
 _qwen3_lock = threading.Lock()
 _qwen3_warmup_done = False
 
+# ── Atención optimizada: flash-attn o SDPA nativo de PyTorch ──
 has_flash_attn = False
+attn_mode = "sdpa"  # Default: SDPA nativo de PyTorch 2.0+ (CUDA optimizado)
 try:
     import flash_attn
     has_flash_attn = True
+    attn_mode = "flash_attention_2"
+    print(f"[Translator] flash-attn: DISPONIBLE (aceleracion ~2-3x)")
+except ImportError:
+    print(f"[Translator] flash-attn: NO DISPONIBLE — usando SDPA nativo de PyTorch")
+    print(f"[Translator] Para acelerar: pip install xformers  (Windows)")
+
+try:
+    import xformers
+    print(f"[Translator] xformers: DISPONIBLE (optimizacion Windows)")
 except ImportError:
     pass
 
@@ -107,17 +118,13 @@ def _load_qwen3():
             from qwen_tts import Qwen3TTSModel
             
             print(f"[Translator] Cargando Qwen3-TTS-CustomVoice en GPU...")
-            if has_flash_attn:
-                print(f"[Translator] flash-attn: DISPONIBLE (aceleracion ~2-3x)")
-            else:
-                print(f"[Translator] flash-attn: NO DISPONIBLE (pip install flash-attn)")
-            
+            print(f"[Translator] Atencion: {attn_mode}")
             t0 = time.time()
             _qwen3_model = Qwen3TTSModel.from_pretrained(
                 "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
                 device_map="cuda:0",
                 dtype=torch.bfloat16,
-                attn_implementation="flash_attention_2" if has_flash_attn else "eager",
+                attn_implementation=attn_mode,
             )
             
             # OPTIMIZATION 1: torch.compile() para acelerar inferencia
