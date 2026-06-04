@@ -57,14 +57,38 @@ Usuario → Web UI (3000) → B/server.py → llama-server (GPU 8081)
 
 ## Dependencias
 ```bash
+# Base
+pip install wheel ninja
+
+# Core
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+
+# Servicios
 pip install faster-whisper psutil pynvml numpy
-# Kokoro-82M (TTS principal)
 pip install kokoro
-# argos-translate (traducción CPU)
 pip install argostranslate
-# Qwen3-TTS (audio calidad, servidor traductor)
 pip install qwen-tts
+
+# [OPCIONAL] flash-attn (~2-3x aceleración Qwen3-TTS)
+# Requiere: CUDA Toolkit 12.4+ (descargar de nvidia.com)
+$env:CUDA_PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4"
+$env:CUDA_HOME = $env:CUDA_PATH
+pip install flash-attn --no-build-isolation
 ```
+
+### flash-attn en Windows
+flash-attn necesita el CUDA Toolkit completo (con `nvcc.exe`), no solo el runtime que trae PyTorch.
+
+**Para instalarlo:**
+1. Descargar e instalar CUDA Toolkit 12.4+: https://developer.nvidia.com/cuda-downloads
+2. Configurar entorno:
+   ```powershell
+   $env:CUDA_PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4"
+   $env:CUDA_HOME = $env:CUDA_PATH
+   ```
+3. `pip install flash-attn --no-build-isolation`
+
+Si no está instalado, Qwen3-TTS funciona igual pero sin aceleración flash-attn (usa eager attention).
 
 ## Notas
 - Los prompts están en INGLÉS (no español) porque Qwen2.5 fue entrenado ~70% en inglés

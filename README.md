@@ -160,29 +160,39 @@ Traducción profesional con audio de alta calidad.
 |:------------|:-------:|:------------|
 | Python | 3.10+ | [python.org](https://www.python.org/) |
 | CUDA Toolkit | 12.4 | `pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124` |
+| CUDA Toolkit (compilación) | 12.4+ | [Descargar](https://developer.nvidia.com/cuda-downloads) - Necesario para flash-attn |
 | llama.cpp | b9479+ | Descargar de [GitHub Releases](https://github.com/ggml-org/llama.cpp/releases) |
 | Git | Cualquiera | [git-scm.com](https://git-scm.com/) (opcional) |
 
 ### Python Dependencies
 
 ```bash
-# Core
+# 1. Base
+pip install wheel ninja
+
+# 2. Core - PyTorch CUDA
 pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
 
-# Traducción (CPU)
+# 3. Traducción (CPU)
 pip install argostranslate
 
-# TTS calidad (GPU)
+# 4. TTS calidad (GPU)
 pip install qwen-tts
 
-# Reconocimiento de voz (CPU)
+# 5. Reconocimiento de voz (CPU)
 pip install faster-whisper
 
-# TTS ligero (opcional, para Teacher/Conversation)
+# 6. TTS ligero (opcional)
 pip install kokoro
 
-# Utilidades
-pip install psutil pynvml numpy transformers
+# 7. Utilidades
+pip install psutil pynvml numpy
+
+# 8. [OPCIONAL] flash-attn (~2-3x aceleración Qwen3-TTS)
+# Requiere: CUDA Toolkit 12.4+ (descargar de nvidia.com)
+$env:CUDA_PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4"
+$env:CUDA_HOME = $env:CUDA_PATH
+pip install flash-attn --no-build-isolation
 ```
 
 ---
