@@ -3,15 +3,14 @@
 Alex Voice — Universal Launcher
 ================================
 Inicia de forma confiable: llama-server + servidor del plan + navegador.
-Unificado para todos los planes (A, B, C, D).
+Unificado para los mejores planes (B y C).
 
 Uso desde .bat:
-    python launcher.py --plan A --port 3000 --server server.py --open
     python launcher.py --plan B --port 3001 --server B/server.py --open
-    python launcher.py --plan D --port 3003 --server D/server.py --model q4 --open
+    python launcher.py --plan C --port 3002 --server C/server.py --open
 
 Uso directo (doble clic):
-    python launcher.py  # por defecto Plan D
+    python launcher.py  # por defecto Plan B
 """
 
 import json, os, sys, time, signal, subprocess, urllib.request, urllib.error, threading, webbrowser
@@ -224,11 +223,9 @@ def start_plan_server(plan_name, port, server_script):
     log(f"  🚀 Iniciando {plan_name} (puerto {port})...")
     env = os.environ.copy()
     # Pasar puerto como variable de entorno (lo usan los servers)
-    port_vars = {
-        "A": "MONITOR_PORT",
+    port_vars =    {
         "B": "PLAN_B_PORT",
         "C": "PLAN_C_PORT",
-        "D": "PLAN_D_PORT",
     }
     if plan_name in port_vars:
         env[port_vars[plan_name]] = str(port)
@@ -258,8 +255,7 @@ def print_banner(plan_name, port, model_label, ctx_size, plan_info=""):
     eprint(f"  >> Alex Voice — {plan_name}")
     eprint(f"  {plan_info}" if plan_info else "")
     eprint(f"  Web UI:      http://localhost:{port}")
-    if plan_name == "Plan D":
-        eprint(f"  Debug:       http://localhost:{port}/debug")
+
     eprint(f"  llama-server: {LLAMA_HOST}")
     eprint(f"  Modelo:      {model_label} ({ctx_size} ctx)")
     eprint(f"  GPU VRAM:    ~{1.2 if 'Q4' in model_label else 3.0} GB de 5.28 GB")
@@ -272,39 +268,28 @@ def print_banner(plan_name, port, model_label, ctx_size, plan_info=""):
 
 # ── Configuraciones de Planes ──────────────────────────────
 PLANS = {
-    "A": {
-        "name": "Plan A",
-        "port": 3000,
-        "server": "server.py",
-        "info": "LLM en GPU | TTS+ASR en CPU",
-    },
     "B": {
         "name": "Plan B",
         "port": 3001,
         "server": "B/server.py",
-        "info": "Kokoro-82M + Piper TTS | Caché 50",
+        "info": "Kokoro-82M + Piper TTS | Caché 50 | Traductor multi-output",
     },
     "C": {
         "name": "Plan C",
         "port": 3002,
         "server": "C/server.py",
-        "info": "Pipeline Completo: ASR | LLM | TTS",
-    },
-    "D": {
-        "name": "Plan D",
-        "port": 3003,
-        "server": "D/server.py",
-        "info": "Definitivo: Kokoro+Piper | Caché 200 | Debug UI",
+        "info": "Pipeline Completo: ASR | LLM | TTS | Traductor multi-output",
     },
 }
 
 # ── Main ─────────────────────────────────────────────────────
 def main():
     # Parsear args modo CLI
-    plan_name = "D"  # default
-    port = 3003
-    server_script = "D/server.py"
-    plan_info = "La Configuración Definitiva"
+    plan_name = "B"  # default
+    port = 3001
+    server_script = "B/server.py"
+    plan_info = "Kokoro-82M + Piper + Traductor multi-output"
+
     open_browser_flag = True
     force_q8 = False
 

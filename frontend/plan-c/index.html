@@ -363,20 +363,16 @@ async function send() {
   input.style.height = '42px';
   isGenerating = true;
   sendBtn.disabled = true;
-  showThinking();
+  showThinking();  history.push({ role: 'user', content: text });
 
-  const systemPrompts = {
-    teacher: 'Eres un profesor paciente y claro. Explica conceptos de forma estructurada, con ejemplos y en español.',
-    conversation: 'Eres un asistente amigable y natural. Responde en el mismo idioma que te hablen.',
-    translator: 'Eres un traductor preciso. Traduce el texto al idioma solicitado manteniendo el tono original. Responde SOLO con la traducción.',
+  // Use the mode-based API (server handles system prompts via shared/translator.py)
+  const chatBody= {
+    messages: [{ role: 'user', content: text }],
+    mode: currentMode,
+    temperature: currentMode === 'translator' ? 0.3 : currentMode === 'teacher' ? 0.5 : 0.7,
+    stream: true,
+    n_predict: 1024,
   };
-
-  history.push({ role: 'user', content: text });
-
-  const messages = [
-    { role: 'system', content: systemPrompts[currentMode] || systemPrompts.conversation },
-    ...history.slice(-20),
-  ];
 
   abortController = new AbortController();
 
@@ -384,12 +380,7 @@ async function send() {
     const resp = await fetch(`${API}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages,
-        temperature: currentMode === 'translator' ? 0.3 : currentMode === 'teacher' ? 0.5 : 0.7,
-        stream: true,
-        n_predict: 1024,
-      }),
+      body: JSON.stringify(chatBody),
       signal: abortController.signal,
     });
 
@@ -446,12 +437,83 @@ async function send() {
     // Stream done
     streamDiv.classList.remove('streaming-cursor');
     const finalText = fullResponse.replace(THINK_REGEX, '').trim() || fullResponse;
-    streamDiv.textContent = finalText;
+    
+    // Parse multi-output from the raw response
+    let parsed = {};
+    let ttsText = finalText;
+    try {
+      const parseResp = await fetch(`${API}/api/parse`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: finalText, mode: currentMode }),
+      });
+      if (parseResp.ok) {
+        const parseData = await parseResp.json();
+        parsed = parseData.parsed || {};
+        ttsText = parseData.tts_text || finalText;
+      }
+    } catch (e) {
+      console.warn('[C] Parse error:', e);
+    }
+    
+    // If we have structured output, display styled cards
+    if (parsed && parsed.text) {
+      streamDiv.innerHTML = '';
+      
+      // TEXT card
+      if (parsed.text) {
+        const tc = document.createElement('div');
+        tc.style.cssText = 'margin-bottom:8px';
+        tc.innerHTML = '<div style="font-size:11px;color:var(--accent);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">' + 
+          (currentMode === 'translator' ? '🔊 Texto Original' : '🔊 Idioma Objetivo') + '</div>' +
+          '<div style="font-size:16px;font-weight:600;line-height:1.5">' + escHtml(parsed.text) + '</div>';
+        streamDiv.appendChild(tc);
+      }
+      
+      // PRONUNCIATION card
+      if (parsed.pronunciation && parsed.pronunciation !== 'N/A') {
+        const pc = document.createElement('div');
+        pc.style.cssText = 'margin-bottom:6px;padding:6px 10px;background:rgba(255,255,255,0.03);border-radius:6px';
+        pc.innerHTML = '<div style="font-size:10px;color:var(--text-dim);text-transform:uppercase">🔤 Pronunciación</div>' +
+          '<div style="font-size:14px;font-style:italic">' + escHtml(parsed.pronunciation) + '</div>';
+        streamDiv.appendChild(pc);
+      }
+      
+      // TRANSLATION card
+      if (parsed.translation) {
+        const tc2 = document.createElement('div');
+        tc2.style.cssText = 'margin-bottom:6px;padding:6px 10px;background:rgba(255,255,255,0.03);border-radius:6px';
+        tc2.innerHTML = '<div style="font-size:10px;color:var(--text-dim);text-transform:uppercase">🌍 Traducción</div>' +
+          '<div style="font-size:14px">' + escHtml(parsed.translation) + '</div>';
+        streamDiv.appendChild(tc2);
+      }
+      
+      // EXPLANATION (teacher)
+      if (parsed.explanation) {
+        const ec = document.createElement('div');
+        ec.style.cssText = 'margin-bottom:6px;padding:6px 10px;background:rgba(255,255,255,0.03);border-radius:6px';
+        ec.innerHTML = '<div style="font-size:10px;color:var(--text-dim);text-transform:uppercase">📖 Explicación</div>' +
+          '<div style="font-size:13px">' + escHtml(parsed.explanation) + '</div>';
+        streamDiv.appendChild(ec);
+      }
+      
+      // EXERCISE (teacher)
+      if (parsed.exercise) {
+        const exc = document.createElement('div');
+        exc.style.cssText = 'margin-top:6px;padding:6px 10px;background:rgba(250,204,21,0.08);border:1px solid rgba(250,204,21,0.2);border-radius:6px';
+        exc.innerHTML = '<div style="font-size:10px;color:var(--yellow);text-transform:uppercase">💪 Ejercicio</div>' +
+          '<div style="font-size:13px">' + escHtml(parsed.exercise) + '</div>';
+        streamDiv.appendChild(exc);
+      }
+    } else {
+      streamDiv.textContent = finalText;
+    }
+    
     history.push({ role: 'assistant', content: finalText });
 
-    // Auto-TTS
-    if (ttsEnabled && finalText && finalText.length > 3 && finalText.length < 500) {
-      await playTts(finalText, streamDiv);
+    // Auto-TTS - only the TTS text (TEXT field for teacher/translator)
+    if (ttsEnabled && ttsText && ttsText.length > 3 && ttsText.length < 500) {
+      await playTts(ttsText, streamDiv);
     }
 
   } catch (e) {
@@ -468,7 +530,12 @@ async function send() {
 }
 
 // ── TTS (reuses single AudioContext) ─────────────────
-async function playTts(text, msgEl) {
+async function escHtml(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function playTts(text, msgEl) {
   try {
     // Try streaming TTS first
     const resp = await fetch(`${API}/api/tts/stream`, {

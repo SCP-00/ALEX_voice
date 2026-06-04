@@ -21,6 +21,11 @@ from pathlib import Path
 from urllib.parse import urlparse
 from collections import OrderedDict
 
+# ── Shared translator module ──────────────────────────────
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from shared.translator import parse_multi_output, get_tts_text, get_system_prompt, build_llm_messages, detect_language_simple
+
 # ── LRU Cache ──────────────────────────────────────────────
 class ResponseCache:
     """LRU cache thread-safe para respuestas del LLM."""
@@ -546,6 +551,10 @@ class Handler(SimpleHTTPRequestHandler):
         body = self.rfile.read(length) if length > 0 else b"{}"
         if self.path == "/api/chat":
             self._handle_chat(body)
+        elif self.path == "/api/translate":
+            self._handle_translate(body)
+        elif self.path == "/api/parse":
+            self._handle_parse(body)
         elif self.path == "/api/tts":
             self._handle_tts(body)
         elif self.path == "/api/tts/stream":
@@ -557,13 +566,20 @@ class Handler(SimpleHTTPRequestHandler):
             self.end_headers()
 
     def _handle_chat(self, body):
-        """Proxy a llama-server con caché LRU."""
+        """Proxy a llama-server con caché LRU y multi-output parsing.
+        
+        Ahora acepta un campo 'mode' (teacher/conversation/translator) para usar
+        system prompts optimizados con formato multi-output (【TEXT】/【PRONUNCIATION】/【TRANSLATION】).
+        """
         try:
             data = json.loads(body)
+            mode = data.get('mode', 'conversation')
+            target_lang = data.get('target_lang', '')
+            
             if "messages" not in data and "prompt" in data:
-                messages = []
                 prompt = data["prompt"]
                 parts = re.split(r'<\|im_start\|>(\w+)\n', prompt)
+                messages = []
                 for i in range(1, len(parts)-1, 2):
                     role = parts[i]
                     content = parts[i+1].replace('<|im_end|>', '').strip()
@@ -577,8 +593,26 @@ class Handler(SimpleHTTPRequestHandler):
                     "temperature": data.get("temperature", 0.7),
                     "stream": data.get("stream", False),
                 }
-            else:
+            elif "messages" in data:
                 chat_data = data
+            else:
+                # Build messages with proper system prompt from translator module
+                user_text = data.get('text', '')
+                sys_prompt = get_system_prompt(mode)
+                messages = [{'role': 'system', 'content': sys_prompt}]
+                # Add target language instruction for translator mode
+                user_content = user_text
+                if target_lang:
+                    user_content = f"{user_text}\n[Target language: {target_lang}]"
+                messages.append({'role': 'user', 'content': user_content})
+                chat_data = {
+                    "messages": messages,
+                    "n_predict": data.get("n_predict", 1024),
+                    "temperature": data.get("temperature", {
+                        'teacher': 0.5, 'translator': 0.3, 'conversation': 0.7
+                    }.get(mode, 0.7)),
+                    "stream": data.get("stream", False),
+                }
 
             # Cache check (non-streaming only)
             if not chat_data.get("stream"):
@@ -606,16 +640,35 @@ class Handler(SimpleHTTPRequestHandler):
                     self.send_header("Content-Type", "text/event-stream")
                     self.send_header("Cache-Control", "no-cache")
                     self.send_header("Access-Control-Allow-Origin", "*")
+                    self.send_header("X-Mode", mode)
                     self.end_headers()
+                    buf = b''
                     while True:
                         chunk = resp.read(4096)
                         if not chunk:
                             break
-                        try:
-                            self.wfile.write(chunk)
-                            self.wfile.flush()
-                        except Exception:
-                            break
+                        buf += chunk
+                        lines = buf.split(b'\n')
+                        buf = lines.pop()
+                        for line in lines:
+                            if line.startswith(b'data: '):
+                                try:
+                                    data_str = line[6:].decode('utf-8', errors='replace').strip()
+                                    if data_str and data_str != '[DONE]':
+                                        parsed = json.loads(data_str)
+                                        choices = parsed.get('choices', [])
+                                        if choices and 'delta' in choices[0]:
+                                            delta = choices[0]['delta']
+                                            if 'content' in delta and delta['content']:
+                                                delta['content'] = re.sub(r'<think>[\s\S]*?</think>\s*', '', delta['content']).strip()
+                                        line = b'data: ' + json.dumps(parsed).encode()
+                                except Exception:
+                                    pass
+                            try:
+                                self.wfile.write(line + b'\n')
+                                self.wfile.flush()
+                            except Exception:
+                                break
             else:
                 with urllib.request.urlopen(req, timeout=120) as resp:
                     result = json.loads(resp.read().decode())
@@ -623,12 +676,18 @@ class Handler(SimpleHTTPRequestHandler):
                 choices = result.get("choices", [])
                 if choices:
                     content = choices[0].get("message", {}).get("content", "")
-                # 🧹 STRIP THINKING TAGS
+                # Strip thinking tags
                 cleaned = re.sub(r'<think>[\s\S]*?</think>\s*', '', content).strip()
                 if not cleaned:
                     cleaned = content
+                # Parse multi-output for teacher/translator
+                parsed = parse_multi_output(cleaned) if mode in ('teacher', 'translator') else {}
                 if choices:
                     choices[0]["message"]["content"] = cleaned
+                # Add parsed output to result
+                if parsed:
+                    result['parsed'] = parsed
+                result['mode'] = mode
                 if cleaned and len(cleaned) > 20:
                     _response_cache.put(chat_data.get("messages", []), cleaned)
                 self._json_response(result)
@@ -655,6 +714,11 @@ class Handler(SimpleHTTPRequestHandler):
             data = json.loads(body)
             text = data.get("text", "").strip()
             lang = data.get("lang", "auto")
+            mode = data.get("mode", "conversation")
+            
+            # If mode is teacher or translator, extract only the TTS-relevant text
+            if mode in ('teacher', 'translator'):
+                text = get_tts_text(text, mode)
             if not text:
                 self._json_response({"error": "texto vacio"})
                 return
@@ -680,11 +744,9 @@ class Handler(SimpleHTTPRequestHandler):
                         
                         if audio_chunks:
                             full_audio = np.concatenate(audio_chunks)
-                            # Clamp y convertir a int16
                             full_audio = np.clip(full_audio, -1.0, 1.0)
                             full_int16 = (full_audio * 32767).astype(np.int16)
                             
-                            # Build WAV
                             data_size = len(full_int16) * 2
                             buf = bytearray(44 + data_size)
                             buf[0:4] = b'RIFF'

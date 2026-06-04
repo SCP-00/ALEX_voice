@@ -131,19 +131,16 @@ const MODES = {
   teacher: {
     name: '🎓 Teacher',
     badge: 'Teacher Mode',
-    sys: 'Eres un tutor experto. Explica conceptos con claridad y ejemplos. Responde en el mismo idioma del usuario.',
     temp: 0.5,
   },
   conversation: {
     name: '💬 Conversación',
     badge: 'Conversation Mode',
-    sys: 'Eres un asistente amigable y conversacional. Respondes en el mismo idioma del usuario. Mantén respuestas naturales.',
     temp: 0.7,
   },
   translator: {
     name: '🌍 Traductor',
     badge: 'Translator Mode',
-    sys: 'Eres un traductor profesional ES/EN/JA. Traduce el texto al idioma solicitado. Para japonés incluye romaji.',
     temp: 0.3,
   },
 };
@@ -172,16 +169,74 @@ function addMsg(role, text, extra) {
   const d = document.createElement('div');
   d.className = 'msg ' + role;
   
-  // Content
-  const content = document.createElement('span');
-  content.textContent = typeof text === 'string' ? text : JSON.stringify(text);
-  d.appendChild(content);
+  extra = extra || {};
+  
+  // If we have parsed multi-output, display structured cards
+  if (extra.parsed && Object.keys(extra.parsed).length > 0) {
+    const p = extra.parsed;
+    
+    // TEXT card (original/teaching language - this is what TTS reads)
+    if (p.text) {
+      const tc = document.createElement('div');
+      tc.style.cssText = 'background:var(--surface);border:1px solid var(--accent);border-radius:6px;padding:8px 10px;margin-bottom:6px';
+      tc.innerHTML = '<div style="font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">🔊 ' + 
+        (extra.mode === 'translator' ? 'Texto Original' : 'Idioma Objetivo') + '</div>' +
+        '<div style="font-size:16px;font-weight:600;line-height:1.4">' + escHtml(p.text) + '</div>';
+      d.appendChild(tc);
+    }
+    
+    // PRONUNCIATION card
+    if (p.pronunciation && p.pronunciation !== 'N/A') {
+      const pc = document.createElement('div');
+      pc.style.cssText = 'background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin-bottom:6px';
+      pc.innerHTML = '<div style="font-size:10px;color:var(--textDim);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px">🔤 Pronunciación</div>' +
+        '<div style="font-size:14px;font-style:italic">' + escHtml(p.pronunciation) + '</div>';
+      d.appendChild(pc);
+    }
+    
+    // TRANSLATION card
+    if (p.translation) {
+      const tc2 = document.createElement('div');
+      tc2.style.cssText = 'background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin-bottom:6px';
+      const label = extra.mode === 'translator' ? 'Traducción' : 'Traducción al nativo';
+      tc2.innerHTML = '<div style="font-size:10px;color:var(--textDim);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px">🌍 ' + label + '</div>' +
+        '<div style="font-size:14px">' + escHtml(p.translation) + '</div>';
+      d.appendChild(tc2);
+    }
+    
+    // EXPLANATION card (teacher mode)
+    if (p.explanation) {
+      const ec = document.createElement('div');
+      ec.style.cssText = 'background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin-bottom:6px';
+      ec.innerHTML = '<div style="font-size:10px;color:var(--textDim);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px">📖 Explicación</div>' +
+        '<div style="font-size:13px">' + escHtml(p.explanation) + '</div>';
+      d.appendChild(ec);
+    }
+    
+    // EXERCISE card (teacher mode)
+    if (p.exercise) {
+      const exc = document.createElement('div');
+      exc.style.cssText = 'background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);border-radius:6px;padding:6px 10px;margin-bottom:6px';
+      exc.innerHTML = '<div style="font-size:10px;color:var(--warn);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px">💪 Ejercicio</div>' +
+        '<div style="font-size:13px">' + escHtml(p.exercise) + '</div>';
+      d.appendChild(exc);
+    }
+    
+    // Store TTS text
+    extra.ttsText = p.text || text;
+  } else {
+    // No structured output - show raw text
+    const content = document.createElement('span');
+    content.textContent = typeof text === 'string' ? text : JSON.stringify(text);
+    d.appendChild(content);
+    extra.ttsText = text;
+  }
   
   // Cached badge
   if (extra && extra.cached) {
     const cb = document.createElement('span');
     cb.className = 'cached-badge';
-    cb.textContent = '⚡ CACHÉ';
+    cb.textContent = '⚡ Caché';
     d.appendChild(cb);
   }
   
@@ -196,13 +251,13 @@ function addMsg(role, text, extra) {
     const tb = document.createElement('div');
     tb.className = 'toolbar';
     
-    // Speak button
+    // Speak button - reads only the TTS text (TEXT field for teacher/translator)
     const spk = document.createElement('button');
     spk.textContent = '🔊 Hablar';
-    spk.onclick = () => speakTTS(text);
+    spk.onclick = () => speakTTS(extra.ttsText || text);
     tb.appendChild(spk);
     
-    // Copy button
+    // Copy button - copies the full original response
     const cpy = document.createElement('button');
     cpy.textContent = '📋 Copiar';
     cpy.onclick = () => { navigator.clipboard.writeText(text); cpy.textContent = '✅ Copiado'; setTimeout(() => cpy.textContent = '📋 Copiar', 2000); };
@@ -213,6 +268,11 @@ function addMsg(role, text, extra) {
   
   document.getElementById('msgs').appendChild(d);
   d.scrollIntoView({ behavior: 'smooth' });
+}
+
+function escHtml(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 function setThinking(on) {
@@ -238,16 +298,16 @@ async function send() {
   setStatus('🧠 Pensando...');
   
   try {
-    // Build messages array
-    const sysMsg = { role: 'system', content: MODES[currentMode].sys };
+    // Build messages array - use mode parameter instead of raw system prompt
     const userMsg = { role: 'user', content: text };
-    const msgs = [sysMsg, ...messageHistory.slice(-6), userMsg];
+    const msgs = [userMsg];
     
     const r = await fetch(API_BASE + '/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        messages: msgs,
+        messages: msgs, 
+        mode: currentMode,
         n_predict: 512,
         temperature: MODES[currentMode].temp,
         stream: false,
@@ -257,16 +317,19 @@ async function send() {
     
     const content = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || data.content || '[sin respuesta]';
     const isCached = data.cached === true;
+    const parsed = data.parsed || {};
+    const mode = data.mode || currentMode;
     
-    addMsg('assistant', content, { cached: isCached });
+    addMsg('assistant', content, { cached: isCached, parsed: parsed, mode: mode });
     messageHistory.push(userMsg, { role: 'assistant', content });
     if (messageHistory.length > 20) messageHistory = messageHistory.slice(-20);
     
     setStatus(isCached ? '⚡ Respuesta desde caché' : '✅ Listo');
     
-    // Auto-speak short responses
-    if (content.length < 500 && !isRecording) {
-      speakTTS(content);
+    // Auto-speak - only the TTS-relevant text
+    const ttsText = parsed.text || content;
+    if (ttsText.length < 500 && !isRecording) {
+      speakTTS(ttsText);
     }
   } catch (e) {
     addMsg('assistant', '⚠️ Error: ' + e.message);
