@@ -82,7 +82,7 @@ class ResponseCache:
 
 # ── Config ─────────────────────────────────────────────────
 LLAMA_HOST = os.environ.get("LLAMA_HOST", "http://localhost:8081")
-PORT = int(os.environ.get("PLAN_B_PORT", "3001"))
+PORT = int(os.environ.get("PLAN_B_PORT", "3000"))
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 PROJECT_ROOT = Path(__file__).parent.parent
 

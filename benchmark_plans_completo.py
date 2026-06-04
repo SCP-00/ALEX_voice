@@ -28,9 +28,8 @@ REPORT_FILE = PROJECT_ROOT / "benchmark_report.md"
 LOG_FILE = PROJECT_ROOT / "benchmark_logs.json"
 
 # ── System prompts desde shared/translator.py ──────────────
-import sys
 sys.path.insert(0, str(PROJECT_ROOT))
-from shared.translator import get_system_prompt, TEACHER_PROMPT, CONVERSATION_PROMPT, TRANSLATOR_PROMPT
+from shared.translator import get_system_prompt, TEACHER_PROMPT, CONVERSATION_PROMPT, TRANSLATOR_PROMPT, parse_multi_output
 
 SYSTEM_PROMPTS = {
     'teacher': TEACHER_PROMPT,
@@ -40,15 +39,9 @@ SYSTEM_PROMPTS = {
 
 PLANS = {
     "B": {
-        "name": "Plan B",
-        "port": 3001,
+        "name": "Alex Voice",
+        "port": 3000,
         "server": "B/server.py",
-        "sys_prompts": SYSTEM_PROMPTS,
-    },
-    "C": {
-        "name": "Plan C",
-        "port": 3002,
-        "server": "C/server.py",
         "sys_prompts": SYSTEM_PROMPTS,
     },
 }
@@ -79,8 +72,8 @@ TEST_PROMPTS = {
             "lang": "es",
         },
         {
-            "name": "Presentación EN",
-            "prompt": "Hi there! I'm learning Spanish and I'd love to practice. Can we talk about music?",
+            "name": "Restaurant rec EN",
+            "prompt": "Hi there! What's the best restaurant you've been to recently? I'm looking for new places to try.",
             "lang": "en",
         },
         {
@@ -92,17 +85,17 @@ TEST_PROMPTS = {
     "translator": [
         {
             "name": "EN→ES simple",
-            "prompt": "The weather is beautiful today. I think I'll go for a walk in the park.",
+            "prompt": "The weather is beautiful today. I think I'll go for a walk in the park.\n[Target language: Spanish]",
             "target_lang": "es",
         },
         {
             "name": "ES→EN idiom",
-            "prompt": "Está lloviendo a cántaros, mejor quedémonos en casa viendo películas.",
+            "prompt": "Está lloviendo a cántaros, mejor quedémonos en casa viendo películas.\n[Target language: English]",
             "target_lang": "en",
         },
         {
             "name": "EN→JA technical",
-            "prompt": "Artificial intelligence and machine learning are transforming the way we interact with technology.",
+            "prompt": "Artificial intelligence and machine learning are transforming the way we interact with technology.\n[Target language: Japanese]",
             "target_lang": "ja",
         },
     ],
@@ -128,6 +121,8 @@ def log(msg):
     eprint(f"  {msg}")
 
 def detect_language(text):
+    """Detect language of a text. For structured responses (teacher/translator),
+    detects language of 【TRANSLATION】 field first, then falls back to whole text."""
     if not text.strip(): return 'en'
     if any('\u3040' <= c <= '\u309f' or '\u30a0' <= c <= '\u30ff' or '\u4e00' <= c <= '\u9fff' for c in text): return 'ja'
     es_words = {'hola','gracias','como','estas','muy','bien','que','el','la','los','las','por','para','con','sin','es','son','del','todo','casa','agua','vida','mundo','dia','noche','hoy','ayer','manana','adios','luego','entonces','tambien','solo','cada','bienvenido','amigo','hablar','tener','hacer','poder','saber','querer','bueno','grande','mejor','siempre','nunca','donde','cuando','porque','quien','ano','mes','semana','saludos','favor','disculpa','siento','perdon','feliz','contento','nosotros','ellos','este','esta','ese','esa','aquel','pensar','creer','gustar','trabajar','estudiar','aprender','entender','conocer','buscar','encontrar','perder','ganar','pagar','llevar','traer','dejar','entrar','salir','abrir','cerrar','empezar','terminar','nada','algo','tengo','quiero','puedo','sabes'}
@@ -162,15 +157,44 @@ def _chat(messages, max_tokens=512):
         return {"text": "", "tokens": 0, "total_time_s": round(time.time() - t_start, 3), "ttft_s": 0, "chars": 0, "error": str(e)[:300]}
 
 def evaluate_response(text, expected_lang, mode, prompt_name):
-    """Evaluate response quality: language, structure, length."""
-    detected = detect_language(text)
+    """Evaluate response quality: language, structure, length.
+    
+    For structured responses (teacher/translator with 【TEXT】/【TRANSLATION】),
+    checks the language of the 【TRANSLATION】 field instead of the whole text.
+    This prevents false positives when 【TEXT】 contains the original language.
+    """
+    
+    # For translator mode with structured output, detect language of TRANSLATION field
+    parsed = parse_multi_output(text)
+    has_structured_output = bool(parsed.get('translation'))
+    
+    if has_structured_output and mode == 'translator':
+        # Check the language of the TRANSLATION field
+        translation_text = parsed['translation']
+        detected = detect_language(translation_text)
+        
+        # Also check TEXT field separately
+        text_field = parsed.get('text', '')
+        text_lang = detect_language(text_field) if text_field else ''
+    else:
+        detected = detect_language(text)
+        text_field = ''
+        text_lang = ''
+    
+    # For teacher mode, check if TEXT is in the target language
+    if has_structured_output and mode == 'teacher':
+        text_field = parsed.get('text', '')
+        text_lang = detect_language(text_field) if text_field else ''
+    
     lang_correct = detected == expected_lang
-
+    
     # Structure evaluation
-    has_text_tag = "【TEXT】" in text or "[TEXT]" in text
-    has_romanji_tag = "【ROMANJI】" in text or "[ROMANJI]" in text
-    has_trans_tag = "【TRANS】" in text or "[TRANS]" in text
+    has_text_tag = "【TEXT】" in text
+    has_pronunciation_tag = "【PRONUNCIATION】" in text or "【ROMANJI】" in text
+    has_translation_tag = "【TRANSLATION】" in text or "【TRANS】" in text
     has_think_tag = "<think>" in text
+    has_explanation = "【EXPLANATION】" in text
+    has_exercise = "【EXERCISE】" in text
 
     # Quality metrics
     words = len(text.split())
@@ -180,18 +204,29 @@ def evaluate_response(text, expected_lang, mode, prompt_name):
     error_msg = None
     if not lang_correct:
         error_msg = f"Language mismatch: expected {expected_lang}, got {detected}"
-    if mode == "teacher" and expected_lang == "es" and not has_text_tag and not has_trans_tag:
-        error_msg = (error_msg or "") + " | Missing structure tags (【TEXT】/【TRANS】)"
+        if has_structured_output:
+            error_msg += f" (@TRANSLATION={detected}, @TEXT={text_lang})"
+    if mode in ("teacher", "translator") and not has_text_tag:
+        error_msg = (error_msg or "") + " | Missing 【TEXT】 tag"
+    if mode == "teacher" and not has_translation_tag:
+        error_msg = (error_msg or "") + " | Missing 【TRANSLATION】 tag"
+    if mode == "translator" and not has_translation_tag:
+        error_msg = (error_msg or "") + " | Missing 【TRANSLATION】 tag"
     if has_think_tag:
-        error_msg = (error_msg or "") + " | Contains <think> tags (thinking mode active)"
+        error_msg = (error_msg or "") + " | Contains <think> tags"
 
     return {
         "lang_detected": detected,
         "lang_correct": lang_correct,
+        "translation_lang": detected if has_structured_output and mode == 'translator' else None,
+        "text_lang": text_lang if has_structured_output else None,
         "words": words,
         "sentences": sentences,
         "avg_sentence_len": round(avg_sentence_len, 1),
-        "has_structure_tags": has_text_tag or has_romanji_tag or has_trans_tag,
+        "has_structure_tags": has_text_tag or has_pronunciation_tag or has_translation_tag,
+        "has_all_multi_output": has_text_tag and has_translation_tag,
+        "has_explanation": has_explanation,
+        "has_exercise": has_exercise,
         "has_think_tags": has_think_tag,
         "error": error_msg,
         "preview": text[:300],
@@ -202,7 +237,7 @@ def run_benchmarks():
     total_tests = 0
     passed_tests = 0
 
-    for plan_key in ["B", "C"]:
+    for plan_key in ["B"]:
         plan = PLANS[plan_key]
         eprint(f"\n{'='*60}")
         eprint(f"📋 BENCHMARK: {plan['name']} (puerto {plan['port']})")
@@ -306,7 +341,7 @@ def start_server(plan_key):
         return False
 
     env = os.environ.copy()
-    port_vars = {"A": "MONITOR_PORT", "B": "PLAN_B_PORT", "C": "PLAN_C_PORT", "D": "PLAN_D_PORT"}
+    port_vars = {"B": "PLAN_B_PORT"}
     if plan_key in port_vars:
         env[port_vars[plan_key]] = str(plan["port"])
 
@@ -349,7 +384,7 @@ def generate_report(total, passed):
     eprint("📝 GENERANDO REPORTE...")
     eprint(f"{'='*60}")
 
-    md = f"""# Alex Voice — Benchmark Detallado: 4 Planes × 3 Modos
+    md = f"""# Alex Voice — Benchmark: Single Plan, 3 Modes (English Prompts)
 
 **Fecha:** {RESULTS['timestamp']}
 **Modelo:** {RESULTS['model']} | **Hardware:** {RESULTS['hardware']}
@@ -362,7 +397,7 @@ def generate_report(total, passed):
 | Plan | Teacher | Conversation | Translator | Total |
 |:-----|:-------:|:------------:|:----------:|:-----:|
 """
-    for plan_key in ["B", "C"]:
+    for plan_key in ["B"]:
         plan_name = PLANS[plan_key]["name"]
         plan_data = RESULTS["tests"].get(plan_name, {})
         scores = {}
@@ -376,7 +411,7 @@ def generate_report(total, passed):
     # ── Velocidad promedio por plan ──
     md += "\n## ⚡ Velocidad Promedio por Plan\n\n"
     md += "| Plan | Tiempo Total | TTFT | Tokens/s | Caracteres |\n|:-----|:------------:|:----:|:--------:|:----------:|\n"
-    for plan_key in ["B", "C"]:
+    for plan_key in ["B"]:
         plan_name = PLANS[plan_key]["name"]
         plan_data = RESULTS["tests"].get(plan_name, {})
         all_tests = []
@@ -392,7 +427,7 @@ def generate_report(total, passed):
             md += f"| **{plan_name}** | — | — | — | — |\n"
 
     # ── Detalle por plan × modo ──
-    for plan_key in ["B", "C"]:
+    for plan_key in ["B"]:
         plan_name = PLANS[plan_key]["name"]
         plan_data = RESULTS["tests"].get(plan_name, {})
         md += f"\n---\n## 📋 {plan_name} — Detalle\n\n"
@@ -430,7 +465,7 @@ def generate_report(total, passed):
     # ── Server endpoint tests ──
     md += "\n---\n## 🌐 Prueba de Endpoints HTTP\n\n"
     md += "| Plan | Puerto | Estado | llama-server |\n|:-----|:------:|:------:|:------------:|\n"
-    for plan_key in ["B", "C"]:
+    for plan_key in ["B"]:
         plan = PLANS[plan_key]
         md += f"| **{plan['name']}** | {plan['port']} | No iniciado | — |\n"
 
@@ -462,8 +497,7 @@ def generate_report(total, passed):
 
 | Plan | Recomendación |
 |:-----|:--------------|
-| **B** | 🥇 Más rápido, Kokoro+Piper, streaming, caché 50 |
-| **C** | 🥈 Cache 100, buen equilibrio, streaming |
+| **Alex Voice** | 🥇 Plan unico optimizado con English prompts + multi-output |
 """
 
     with open(REPORT_FILE, 'w', encoding='utf-8') as f:
@@ -504,7 +538,7 @@ def main():
     eprint("🌐 PROBANDO ENDPOINTS DE CADA SERVIDOR...")
     eprint(f"{'='*60}")
 
-    for plan_key in ["B", "C"]:
+    for plan_key in ["B"]:
         plan = PLANS[plan_key]
         eprint(f"\n  {plan['name']} (:{plan['port']})...")
         

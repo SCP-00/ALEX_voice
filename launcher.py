@@ -3,14 +3,13 @@
 Alex Voice — Universal Launcher
 ================================
 Inicia de forma confiable: llama-server + servidor del plan + navegador.
-Unificado para los mejores planes (B y C).
+Plan unico optimizado (Plan B).
 
-Uso desde .bat:
-    python launcher.py --plan B --port 3001 --server B/server.py --open
-    python launcher.py --plan C --port 3002 --server C/server.py --open
+Uso:
+    python launcher.py --open
 
 Uso directo (doble clic):
-    python launcher.py  # por defecto Plan B
+    python launcher.py
 """
 
 import json, os, sys, time, signal, subprocess, urllib.request, urllib.error, threading, webbrowser
@@ -225,7 +224,6 @@ def start_plan_server(plan_name, port, server_script):
     # Pasar puerto como variable de entorno (lo usan los servers)
     port_vars =    {
         "B": "PLAN_B_PORT",
-        "C": "PLAN_C_PORT",
     }
     if plan_name in port_vars:
         env[port_vars[plan_name]] = str(port)
@@ -269,16 +267,10 @@ def print_banner(plan_name, port, model_label, ctx_size, plan_info=""):
 # ── Configuraciones de Planes ──────────────────────────────
 PLANS = {
     "B": {
-        "name": "Plan B",
-        "port": 3001,
+        "name": "Alex Voice",
+        "port": 3000,
         "server": "B/server.py",
-        "info": "Kokoro-82M + Piper TTS | Caché 50 | Traductor multi-output",
-    },
-    "C": {
-        "name": "Plan C",
-        "port": 3002,
-        "server": "C/server.py",
-        "info": "Pipeline Completo: ASR | LLM | TTS | Traductor multi-output",
+        "info": "Kokoro-82M + Piper TTS | Traductor multi-output | Streaming",
     },
 }
 
@@ -286,9 +278,9 @@ PLANS = {
 def main():
     # Parsear args modo CLI
     plan_name = "B"  # default
-    port = 3001
+    port = 3000
     server_script = "B/server.py"
-    plan_info = "Kokoro-82M + Piper + Traductor multi-output"
+    plan_info = "Kokoro-82M + Piper + Traductor multi-output + Streaming"
 
     open_browser_flag = True
     force_q8 = False
