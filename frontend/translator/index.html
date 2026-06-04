@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Traductor — Alex Voice</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0a0e17;--surface:#111827;--surface2:#1c2538;--border:#2a3650;--text:#e0e8f5;--textDim:#8899bb;--accent:#3b82f6;--accent2:#2563eb;--success:#22c55e;--warn:#f59e0b;--glow:rgba(59,130,246,.25);--translator:#8b5cf6}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
+
+.header{padding:16px 24px;border-bottom:1px solid var(--border);background:var(--surface);display:flex;align-items:center;justify-content:space-between}
+.header h1{font-size:16px;font-weight:600;color:var(--translator)}
+.header .badge{font-size:10px;color:var(--textDim);background:var(--surface2);padding:2px 8px;border-radius:10px}
+
+.main{flex:1;max-width:800px;width:100%;margin:0 auto;padding:24px}
+
+/* Language selectors */
+.lang-row{display:flex;gap:12px;align-items:center;margin-bottom:20px}
+.lang-group{flex:1}
+.lang-group label{font-size:10px;color:var(--textDim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;display:block}
+.lang-select{width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:14px;outline:none;cursor:pointer;transition:all .2s}
+.lang-select:hover{border-color:var(--translator)}
+.lang-select:focus{border-color:var(--translator);box-shadow:0 0 0 2px rgba(139,92,246,.25)}
+.swap-btn{width:36px;height:36px;border-radius:50%;border:1px solid var(--border);background:var(--surface2);color:var(--textDim);cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;margin-top:16px;transition:all .2s}
+.swap-btn:hover{background:var(--translator);color:#fff;border-color:var(--translator)}
+
+/* Input area */
+.input-area{display:flex;gap:8px;margin-bottom:12px}
+textarea{flex:1;padding:12px 16px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-family:inherit;font-size:14px;resize:none;outline:none;min-height:60px;transition:all .2s}
+textarea:focus{border-color:var(--translator);box-shadow:0 0 0 2px rgba(139,92,246,.25)}
+.mic-btn{width:48px;height:60px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--textDim);font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s}
+.mic-btn:hover{color:var(--text);background:var(--surface2);border-color:var(--translator)}
+.mic-btn.recording{background:#dc2626;color:#fff;border-color:#dc2626;animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 8px rgba(220,38,38,.4)}50%{box-shadow:0 0 20px rgba(220,38,38,.6)}}
+
+/* Translate button */
+.translate-btn{width:100%;padding:12px;border-radius:8px;border:none;background:var(--translator);color:#fff;font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;transition:all .2s;margin-bottom:20px}
+.translate-btn:hover{background:#7c3aed}
+.translate-btn:disabled{opacity:.4;cursor:not-allowed}
+
+/* Result cards */
+.result-card{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:12px;display:none}
+.result-card.show{display:block;animation:fadeIn .3s}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}}
+.result-card .label{font-size:10px;color:var(--textDim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+.result-card .text{font-size:16px;font-weight:600;line-height:1.5}
+.result-card .text.original{color:var(--text)}
+.result-card .text.translated{color:var(--translator)}
+.result-card .meta{font-size:11px;color:var(--textDim);margin-top:8px;display:flex;gap:12px}
+
+/* Audio player */
+.audio-row{display:flex;gap:8px;margin-top:12px;align-items:center}
+.audio-row audio{flex:1;height:36px;border-radius:6px}
+.play-btn{width:36px;height:36px;border-radius:50%;border:none;background:var(--translator);color:#fff;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;transition:all .2s}
+.play-btn:hover{background:#7c3aed}
+.play-btn:disabled{opacity:.4;cursor:not-allowed}
+
+/* Loading */
+.loading{display:none;text-align:center;padding:20px;color:var(--textDim)}
+.loading.show{display:block}
+.loading .spinner{width:24px;height:24px;border:2px solid var(--border);border-top-color:var(--translator);border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 8px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ASR transcript */
+.asr-transcript{font-size:11px;color:var(--warn);min-height:18px;margin-bottom:8px}
+
+/* Footer */
+.footer{font-size:10px;color:var(--textDim);padding:12px 24px;border-top:1px solid var(--border);text-align:center}
+.footer .status{color:var(--success)}
+.footer .status.busy{color:var(--warn)}
+
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+</style>
+</head>
+<body>
+
+<div class="header">
+<h1>🌍 Alex Voice — Traductor</h1>
+<span class="badge" id="statusBadge">Qwen3-TTS · argos</span>
+</div>
+
+<div class="main">
+  <!-- Language Selectors -->
+  <div class="lang-row">
+    <div class="lang-group">
+      <label>Desde</label>
+      <select class="lang-select" id="fromLang">
+        <option value="auto">🌐 Detectar automático</option>
+        <option value="en">🇬🇧 Inglés</option>
+        <option value="es">🇪🇸 Español</option>
+        <option value="ja">🇯🇵 Japonés</option>
+      </select>
+    </div>
+    <button class="swap-btn" onclick="swapLanguages()" title="Intercambiar idiomas">⇄</button>
+    <div class="lang-group">
+      <label>Hasta</label>
+      <select class="lang-select" id="toLang">
+        <option value="es">🇪🇸 Español</option>
+        <option value="en">🇬🇧 Inglés</option>
+        <option value="ja">🇯🇵 Japonés</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Input -->
+  <div class="input-area">
+    <textarea id="input" placeholder="Escribe o usa el micrófono..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();translate()}"></textarea>
+    <button class="mic-btn" id="micBtn" onclick="toggleMic()" title="Grabar voz">🎤</button>
+  </div>
+  <div class="asr-transcript" id="asrTranscript"></div>
+
+  <!-- Translate Button -->
+  <button class="translate-btn" id="translateBtn" onclick="translate()">🌍 Traducir</button>
+
+  <!-- Loading -->
+  <div class="loading" id="loading">
+    <div class="spinner"></div>
+    <span id="loadingText">Traduciendo...</span>
+  </div>
+
+  <!-- Result: Original -->
+  <div class="result-card" id="resultOriginal">
+    <div class="label" id="originalLabel">📝 Texto original</div>
+    <div class="text original" id="originalText"></div>
+  </div>
+
+  <!-- Result: Translation -->
+  <div class="result-card" id="resultTranslation">
+    <div class="label" id="translationLabel">🌍 Traducción</div>
+    <div class="text translated" id="translationText"></div>
+    <div class="meta">
+      <span id="transTime"></span>
+      <span id="transLangs"></span>
+    </div>
+    <div class="audio-row">
+      <button class="play-btn" id="playBtn" onclick="playAudio()">▶</button>
+      <audio id="audioPlayer" controls></audio>
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+<span>🤖 Qwen3-TTS + argos-translate</span>
+<span> · </span>
+<span class="status" id="footerStatus">✅ Listo</span>
+</div>
+
+<script>
+const API = window.location.origin;
+
+let currentAudioBlob = null;
+let currentAudioUrl = null;
+let isRecording = false;
+let mediaRecorder = null;
+let audioChunks = [];
+let isTranslating = false;
+let modelPreloaded = false;
+
+// Language map for Qwen3-TTS
+const LANG_TTS = {
+  'en': 'English',
+  'es': 'Spanish',
+  'ja': 'Japanese',
+};
+
+// Speakers per language
+const SPEAKERS = {
+  'en': 'Vivian',
+  'es': 'Serena',
+  'ja': 'Ono_Anna',
+};
+
+function setStatus(msg, busy) {
+  const el = document.getElementById('footerStatus');
+  el.textContent = msg;
+  el.className = 'status' + (busy ? ' busy' : '');
+}
+
+function showLoading(show, text) {
+  document.getElementById('loading').classList.toggle('show', show);
+  if (text) document.getElementById('loadingText').textContent = text;
+  document.getElementById('translateBtn').disabled = show;
+}
+
+function swapLanguages() {
+  const from = document.getElementById('fromLang');
+  const to = document.getElementById('toLang');
+  // Don't swap if from is auto
+  if (from.value === 'auto') return;
+  [from.value, to.value] = [to.value, from.value];
+}
+
+async function translate() {
+  if (isTranslating) return;
+  
+  const input = document.getElementById('input');
+  const text = input.value.trim();
+  if (!text) return;
+  
+  const fromLang = document.getElementById('fromLang').value;
+  const toLang = document.getElementById('toLang').value;
+  
+  isTranslating = true;
+  showLoading(true, 'Traduciendo...');
+  setStatus('🔄 Traduciendo...', true);
+  
+  // Hide previous results
+  document.getElementById('resultOriginal').classList.remove('show');
+  document.getElementById('resultTranslation').classList.remove('show');
+  
+  try {
+    // Step 1: Translate
+    const r = await fetch(API + '/api/translate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, from_lang: fromLang, to_lang: toLang }),
+    });
+    const data = await r.json();
+    
+    if (data.error) {
+      setStatus('❌ ' + data.error);
+      showLoading(false);
+      isTranslating = false;
+      return;
+    }
+    
+    // Show original
+    document.getElementById('originalLabel').textContent = '📝 ' + data.from_lang_name;
+    document.getElementById('originalText').textContent = data.original;
+    document.getElementById('resultOriginal').classList.add('show');
+    
+    // Show translation
+    document.getElementById('translationLabel').textContent = '🌍 ' + data.to_lang_name;
+    document.getElementById('translationText').textContent = data.translation;
+    document.getElementById('transTime').textContent = '⚡ ' + data.translation_time_ms + 'ms';
+    document.getElementById('transLangs').textContent = data.from_lang + ' → ' + data.to_lang;
+    document.getElementById('resultTranslation').classList.add('show');
+    
+    showLoading(false);
+    setStatus('✅ Traducido — generando audio...', true);
+    
+    // Step 2: Generate TTS audio
+    const ttsLang = LANG_TTS[data.to_lang] || 'Spanish';
+    const speaker = SPEAKERS[data.to_lang] || 'Serena';
+    
+    showLoading(true, 'Generando audio con Qwen3-TTS...');
+    
+    const audioR = await fetch(API + '/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        text: data.translation, 
+        language: ttsLang,
+        speaker: speaker,
+      }),
+    });
+    
+    if (!audioR.ok) {
+      const errData = await audioR.json();
+      setStatus('❌ TTS error: ' + (errData.error || ''));
+      showLoading(false);
+      isTranslating = false;
+      return;
+    }
+    
+    // Revoke old URL before creating new one (memory leak fix)
+    if (currentAudioUrl) {
+      URL.revokeObjectURL(currentAudioUrl);
+    }
+    currentAudioBlob = await audioR.blob();
+    currentAudioUrl = URL.createObjectURL(currentAudioBlob);
+    const audioPlayer = document.getElementById('audioPlayer');
+    audioPlayer.src = currentAudioUrl;
+    
+    const genTimeMs = audioR.headers.get('X-Generation-Time-Ms') || '?';
+    const audioDurS = audioR.headers.get('X-Audio-Duration-S') || '?';
+    
+    showLoading(false);
+    setStatus('✅ Audio listo (' + genTimeMs + 'ms gen, ' + audioDurS + 's audio)');
+    
+    // Auto-play when audio is ready (not setTimeout)
+    audioPlayer.oncanplaythrough = () => {
+      playAudio();
+      audioPlayer.oncanplaythrough = null;
+    };
+    
+  } catch (e) {
+    setStatus('❌ Error: ' + e.message);
+    showLoading(false);
+  }
+  
+  isTranslating = false;
+}
+
+function playAudio() {
+  const audio = document.getElementById('audioPlayer');
+  if (audio.src) {
+    audio.play();
+    document.getElementById('playBtn').textContent = '⏸';
+    audio.onended = () => {
+      document.getElementById('playBtn').textContent = '▶';
+    };
+  }
+}
+
+// ── ASR (Mic) ──
+async function toggleMic() {
+  if (isRecording) {
+    stopRecording();
+    return;
+  }
+  
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ 
+      audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 } 
+    });
+    
+    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+    audioChunks = [];
+    
+    mediaRecorder.ondataavailable = e => {
+      if (e.data.size > 0) audioChunks.push(e.data);
+    };
+    
+    mediaRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      if (audioChunks.length === 0) return;
+      
+      document.getElementById('asrTranscript').textContent = '🔄 Transcribiendo...';
+      setStatus('🔄 Transcribiendo...', true);
+      
+      const blob = new Blob(audioChunks, { type: 'audio/webm' });
+      const wavBlob = await convertToWav(blob);
+      const base64 = await blobToBase64(wavBlob);
+      
+      try {
+        const r = await fetch(API + '/api/asr', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ audio: base64, lang: 'auto' }),
+        });
+        const data = await r.json();
+        
+        if (data.error) {
+          document.getElementById('asrTranscript').textContent = '❌ ' + data.error;
+          setStatus('✅ Listo');
+          return;
+        }
+        
+        document.getElementById('asrTranscript').textContent = '🎤 ' + data.text;
+        document.getElementById('input').value = data.text;
+        
+        // Auto-translate after short delay
+        setTimeout(() => translate(), 500);
+        
+      } catch (e) {
+        document.getElementById('asrTranscript').textContent = '❌ Error: ' + e.message;
+        setStatus('✅ Listo');
+      }
+    };
+    
+    mediaRecorder.start();
+    isRecording = true;
+    document.getElementById('micBtn').classList.add('recording');
+    document.getElementById('asrTranscript').textContent = '🎤 Grabando... Di algo';
+    setStatus('🎤 Grabando...');
+    
+    // Auto-stop after 8 seconds
+    setTimeout(() => {
+      if (isRecording) stopRecording();
+    }, 8000);
+    
+  } catch (e) {
+    document.getElementById('asrTranscript').textContent = '❌ Error mic: ' + e.message;
+  }
+}
+
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+  isRecording = false;
+  document.getElementById('micBtn').classList.remove('recording');
+}
+
+async function convertToWav(webmBlob) {
+  const ac = new (window.AudioContext || window.webkitAudioContext)();
+  const buf = await ac.decodeAudioData(await webmBlob.arrayBuffer());
+  const pcm = buf.getChannelData(0);
+  const sr = buf.sampleRate;
+  const targetSr = 16000;
+  const ratio = sr / targetSr;
+  const newLen = Math.floor(pcm.length / ratio);
+  const resampled = new Float32Array(newLen);
+  for (let i = 0; i < newLen; i++) {
+    resampled[i] = pcm[Math.floor(i * ratio)];
+  }
+  const int16 = new Int16Array(resampled.length);
+  for (let i = 0; i < resampled.length; i++) {
+    const s = Math.max(-1, Math.min(1, resampled[i]));
+    int16[i] = s < 0 ? s * 32768 : s * 32767;
+  }
+  const numSamples = int16.length;
+  const dataSize = numSamples * 2;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+  const writeStr = (offset, str) => {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  };
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, targetSr, true);
+  view.setUint32(28, targetSr * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, 'data');
+  view.setUint32(40, dataSize, true);
+  for (let i = 0; i < numSamples; i++) {
+    view.setInt16(44 + i * 2, int16[i], true);
+  }
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+// Pre-load Qwen3-TTS in background
+async function preloadModel() {
+  try {
+    const r = await fetch(API + '/api/load', { method: 'POST', body: '{}' });
+    const data = await r.json();
+    if (data.ok) {
+      modelPreloaded = true;
+      console.log('Qwen3-TTS pre-cargado en', data.time_ms + 'ms');
+      setStatus('✅ Qwen3-TTS listo', false);
+    }
+  } catch (e) {
+    console.log('Pre-load no disponible (se cargara bajo demanda)');
+  }
+}
+
+// Initialize
+setStatus('✅ Iniciando...', true);
+preloadModel();
+</script>
+</body>
+</html>
