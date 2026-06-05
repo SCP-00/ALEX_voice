@@ -2,212 +2,186 @@
 chcp 65001 >nul
 setlocal enabledelayedexpansion
 
-:: ── Auto-detect project root (donde se ejecuta setup.bat) ──
 set "PROJECT_ROOT=%~dp0"
-:: Remove trailing backslash
 if "%PROJECT_ROOT:~-1%"=="\" set "PROJECT_ROOT=%PROJECT_ROOT:~0,-1%"
 cd /d "%PROJECT_ROOT%"
 
-title Alex Voice — Setup
+set "PY=python"
+set "LLAMA_URL=https://github.com/ggml-org/llama.cpp/releases/download/b9479/llama-b9479-bin-win-cuda-13.3-x64.zip"
+set "MODEL_URL=https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf"
+
+title Alex Voice - Setup
 
 echo =============================================
-echo   Alex Voice — Setup Automatico
-echo   Asistente Local con IA Multilingue
+echo   Alex Voice - Setup idempotente
 echo   Proyecto: %PROJECT_ROOT%
 echo =============================================
 echo.
 
-:: ── Check NVIDIA GPU ──
-set STEP=1
-echo [%STEP%/7] Verificando GPU NVIDIA...
-nvidia-smi >nul 2>&1
-if %errorlevel% neq 0 (
-    echo   ❌ No se detecto GPU NVIDIA.
-    echo   Este proyecto requiere CUDA y una GPU NVIDIA compatible.
-    echo   Si tienes una GPU NVIDIA, instala los drivers desde:
-    echo   https://www.nvidia.com/Download/index.aspx
+echo [1/6] Verificando Python...
+%PY% --version >nul 2>&1
+if errorlevel 1 (
+    echo   ERROR: Python no esta en PATH.
+    echo   Instala Python 3.10+ y marca "Add Python to PATH".
     pause
     exit /b 1
 )
-for /f "tokens=2 delims=: " %%g in ('nvidia-smi --query-gpu=name --format=csv,noheader 2^>^&1') do set gpuname=%%g
-echo   ✅ GPU detectada: %gpuname%
-
-:: ── Check Python ──
-echo.
-set /a STEP+=1
-echo [%STEP%/7] Verificando Python...
-python --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo   ❌ Python no encontrado. Descarga Python 3.10:
-    echo   https://www.python.org/ftp/python/3.10.11/python-3.10.11-amd64.exe
-    echo   MARCA "Add Python to PATH" durante la instalacion.
-    start https://www.python.org/ftp/python/3.10.11/python-3.10.11-amd64.exe
+for /f "tokens=2 delims= " %%v in ('%PY% --version 2^>^&1') do set "PYVER=%%v"
+echo   OK: Python %PYVER%
+%PY% -m pip --version >nul 2>&1
+if errorlevel 1 (
+    echo   ERROR: pip no esta disponible para este Python.
     pause
     exit /b 1
 )
-for /f "tokens=2 delims= " %%v in ('python --version 2^>^&1') do set pyver=%%v
-echo   ✅ Python %pyver%
 
-:: ── pip dependencies ──
 echo.
-set /a STEP+=1
-echo [%STEP%/7] Instalando dependencias base (wheel, ninja)...
-pip install wheel ninja 2>&1 | findstr /i "successfully" >nul
-echo   ✅ Wheel + Ninja
-
-:: ── CUDA torch ──
-echo.
-set /a STEP+=1
-echo [%STEP%/7] Instalando PyTorch CUDA...
-echo   (puede tomar 2-5 minutos, ~3GB de descarga)
-pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124 2>&1 | findstr /i "successfully" >nul
-if %errorlevel% neq 0 (
-    echo   ⚠️  Error instalando torch CUDA. Intentando CPU version...
-    pip install torch torchaudio
-)
-python -c "import torch; print('  ✅ CUDA', torch.version.cuda if torch.cuda.is_available() else 'NO CUDA')" 2>&1
-
-:: ── Python dependencies ──
-echo.
-set /a STEP+=1
-echo [%STEP%/7] Instalando dependencias Python...
-
-echo   Instalando argostranslate...
-pip install argostranslate -q 2>&1 | findstr /i "successfully" >nul
-echo   ✅ argostranslate
-
-echo   Instalando qwen-tts...
-pip install qwen-tts -q 2>&1 | findstr /i "successfully" >nul
-echo   ✅ qwen-tts
-
-echo   Instalando faster-whisper...
-pip install faster-whisper -q 2>&1 | findstr /i "successfully" >nul
-echo   ✅ faster-whisper
-
-echo   Instalando kokoro + utilidades...
-pip install kokoro psutil pynvml -q 2>&1 | findstr /i "successfully" >nul
-echo   ✅ kokoro, psutil, pynvml
-
-echo   Instalando xformers (atención optimizada para Windows)...
-pip install xformers -q 2>&1 | findstr /i "successfully" >nul
-if %errorlevel% equ 0 (
-    echo   ✅ xformers (atención optimizada, alternativa Windows a flash-attn)
+echo [2/6] Verificando GPU NVIDIA...
+where nvidia-smi >nul 2>&1
+if errorlevel 1 (
+    echo   AVISO: nvidia-smi no esta en PATH. El setup continua y PyTorch verificara CUDA.
 ) else (
-    echo   ⚠️  xformers no disponible (se usara SDPA nativo de PyTorch)
-)
-
-echo   Instalando flash-attn (opcional, solo si tienes CUDA toolkit)...
-pip install flash-attn --no-build-isolation -q 2>&1 | findstr /i "successfully" >nul
-if %errorlevel% equ 0 (
-    echo   ✅ flash-attn (Qwen3-TTS acelerado ~2x)
-) else (
-    echo   ⚠️  flash-attn no disponible (sin CUDA toolkit para compilar)
-)
-
-:: Install argos language packages
-echo.
-echo   Instalando paquetes de idioma argos (EN/ES/JA)...
-python -c "
-import argostranslate.package
-argostranslate.package.update_package_index()
-available = argostranslate.package.get_available_packages()
-for fc, tc in [('en','es'),('es','en'),('en','ja'),('ja','en'),('ja','es'),('es','ja')]:
-    pkg = next((p for p in available if p.from_code==fc and p.to_code==tc), None)
-    if pkg:
-        path = pkg.download()
-        argostranslate.package.install_from_path(path)
-        print(f'  OK: {fc}->{tc}')
-" 2>&1
-echo   ✅ Paquetes de idioma
-
-:: ── llama-server ──
-echo.
-set /a STEP+=1
-echo [%STEP%/7] Descargando llama-server...
-
-if not exist "%PROJECT_ROOT%\llama-server-bin" mkdir "%PROJECT_ROOT%\llama-server-bin" 2>nul
-
-if exist "%PROJECT_ROOT%\llama-server-bin\llama-server.exe" (
-    echo   ✅ Ya existe
-) else (
-    echo   Descargando ~100MB...
-    curl -L -o "%PROJECT_ROOT%\llama-server.zip" "https://github.com/ggml-org/llama.cpp/releases/download/b9479/llama-b9479-bin-win-cuda-13.3-x64.zip"
-    if exist "%PROJECT_ROOT%\llama-server.zip" (
-        :: Intentar con tar (Windows 10 17063+)
-        tar -xf "%PROJECT_ROOT%\llama-server.zip" -C "%PROJECT_ROOT%\llama-server-bin" --strip-components=1 2>nul
-        if not exist "%PROJECT_ROOT%\llama-server-bin\llama-server.exe" (
-            echo   Fallback: extrayendo con PowerShell...
-            powershell -Command "
-                Expand-Archive -Path '%PROJECT_ROOT%\llama-server.zip' -DestinationPath '%PROJECT_ROOT%\llama-server-tmp' -Force;
-                $items = Get-ChildItem '%PROJECT_ROOT%\llama-server-tmp';
-                if($items.Count -eq 1 -and (Get-Item $items[0]).PSIsContainer) {
-                    Move-Item '$($items[0].FullName)\*' '%PROJECT_ROOT%\llama-server-bin\' -Force;
-                } else {
-                    Move-Item '$($items[0].FullName)\*' '%PROJECT_ROOT%\llama-server-bin\' -Force;
-                }
-                Remove-Item -Recurse -Force '%PROJECT_ROOT%\llama-server-tmp' -ErrorAction SilentlyContinue;
-            " >nul 2>&1
-        )
-        del "%PROJECT_ROOT%\llama-server.zip" 2>nul
-        if exist "%PROJECT_ROOT%\llama-server-bin\llama-server.exe" (
-            echo   ✅ llama-server descargado
-        ) else (
-            echo   ❌ No se pudo extraer llama-server
-            echo   Descarga manual: https://github.com/ggml-org/llama.cpp/releases
-            echo   Mueve llama-server.exe a: %PROJECT_ROOT%\llama-server-bin\
-        )
+    for /f "usebackq delims=" %%g in (`nvidia-smi --query-gpu^=name --format^=csv^,noheader 2^>nul`) do (
+        if not defined GPUNAME set "GPUNAME=%%g"
+    )
+    if defined GPUNAME (
+        echo   OK: GPU detectada: !GPUNAME!
     ) else (
-        echo   ❌ No se pudo descargar llama-server
-        echo   Descarga manual: https://github.com/ggml-org/llama.cpp/releases
-        echo   Mueve llama-server.exe a: %PROJECT_ROOT%\llama-server-bin\
+        echo   AVISO: nvidia-smi existe, pero no devolvio una GPU.
     )
 )
 
-:: ── Download ALL AI models (al final, todo automatico) ──
 echo.
-set /a STEP+=1
-echo [%STEP%/7] Descargando modelos de IA...
-echo.
+echo [3/6] Instalando dependencias Python solo si faltan...
+call :ensure_module wheel wheel
+call :ensure_module ninja ninja
+call :ensure_torch_cuda
+call :ensure_module argostranslate argostranslate
+call :ensure_module qwen_tts qwen-tts
+call :ensure_module faster_whisper faster-whisper
+call :ensure_module kokoro kokoro
+call :ensure_module piper piper-tts
+call :ensure_module psutil psutil
+call :ensure_module pynvml pynvml
+call :ensure_module numpy numpy
+call :ensure_optional_module xformers xformers
 
-if not exist "%PROJECT_ROOT%\models" mkdir "%PROJECT_ROOT%\models" 2>nul
+call :ensure_cuda_env
 
-:: 7a. LLM Model (~1.1GB)
-echo   [7a/3] Modelo LLM: Qwen2.5-1.5B-Q4_K_M (~1.1GB)
-if exist "%PROJECT_ROOT%\models\qwen2.5-1.5b-q4_k_m.gguf" (
-    echo   ✅ Ya descargado
+if /i "%ALEX_INSTALL_FLASH_ATTN%"=="1" (
+    call :ensure_optional_module flash_attn flash-attn --no-build-isolation
 ) else (
-    echo   Descargando desde HuggingFace...
-    python -c "
-import os, urllib.request, sys
-url = 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf'
-out = os.path.join(r'%PROJECT_ROOT%\models', 'qwen2.5-1.5b-q4_k_m.gguf')
-print('  Descargando (~1.1GB, esto toma varios minutos)...')
-sys.stdout.flush()
-try:
-    urllib.request.urlretrieve(url, out)
-    print('  ✅ LLM descargado')
-except Exception as e:
-    print(f'  ❌ Error: {e}')
-    print('  Descarga manual: https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF')
-" 2>&1
+    echo   SKIP: flash-attn es opcional. Para intentar instalarlo:
+    echo        set ALEX_INSTALL_FLASH_ATTN=1
+    echo        Y asegurar CUDA_PATH+ CUDA_HOME configurados (setup los configura)
 )
 
-:: 7b. Qwen3-TTS model (~2GB, se descarga al primer uso)
 echo.
-echo   [7b/3] Qwen3-TTS-CustomVoice (~2GB)
-echo   Se descargara automaticamente al primer uso del traductor
+echo [4/6] Instalando paquetes argos core si faltan...
+%PY% -c "import argostranslate.package as p; p.update_package_index(); avail=p.get_available_packages(); installed={(x.from_code,x.to_code) for x in p.get_installed_packages()}; pairs=[('en','es'),('es','en'),('en','ja'),('ja','en')]; [p.install_from_path(pkg.download()) for fc,tc in pairs if (fc,tc) not in installed for pkg in avail if pkg.from_code==fc and pkg.to_code==tc]; print('  OK: argos EN/ES/JA listo')"
+if errorlevel 1 (
+    echo   AVISO: no se pudieron instalar todos los paquetes argos. Se intentaran bajo demanda.
+)
 
-:: 7c. faster-whisper model (~150MB, se descarga al primer uso)
 echo.
-echo   [7c/3] faster-whisper base (~150MB)
-echo   Se descargara automaticamente al primer uso del traductor
+echo [5/6] Verificando llama-server local...
+if exist "%PROJECT_ROOT%\llama-server-bin\llama-server.exe" (
+    echo   OK: llama-server-bin\llama-server.exe ya existe
+) else (
+    echo   Descargando llama.cpp b9479 CUDA 13.3...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $root=$env:PROJECT_ROOT; $zip=Join-Path $root 'llama-server.zip'; $tmp=Join-Path $root 'llama-server-tmp'; $dest=Join-Path $root 'llama-server-bin'; Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force $dest | Out-Null; Invoke-WebRequest -Uri $env:LLAMA_URL -OutFile $zip; Expand-Archive -Path $zip -DestinationPath $tmp -Force; $exe=Get-ChildItem $tmp -Recurse -Filter 'llama-server.exe' | Select-Object -First 1; if(-not $exe){ throw 'llama-server.exe no encontrado dentro del ZIP' }; Copy-Item (Join-Path $exe.Directory.FullName '*') $dest -Recurse -Force; Remove-Item $zip -Force -ErrorAction SilentlyContinue; Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue"
+    if errorlevel 1 (
+        echo   ERROR: no se pudo descargar o extraer llama-server.
+        echo   Descarga manual: https://github.com/ggml-org/llama.cpp/releases
+    ) else (
+        echo   OK: llama-server descargado
+    )
+)
+
+echo.
+echo [6/6] Verificando modelo LLM local...
+if not exist "%PROJECT_ROOT%\models" mkdir "%PROJECT_ROOT%\models" >nul 2>&1
+if exist "%PROJECT_ROOT%\models\qwen2.5-1.5b-q4_k_m.gguf" (
+    echo   OK: modelo Qwen2.5 local ya existe
+) else (
+    echo   Descargando Qwen2.5-1.5B Q4_K_M (~1.1GB)...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; Invoke-WebRequest -Uri $env:MODEL_URL -OutFile (Join-Path $env:PROJECT_ROOT 'models\qwen2.5-1.5b-q4_k_m.gguf')"
+    if errorlevel 1 (
+        echo   ERROR: no se pudo descargar el modelo.
+        echo   Descarga manual: https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF
+    ) else (
+        echo   OK: modelo descargado
+    )
+)
 
 echo.
 echo =============================================
-echo   ✅ Setup completado!
-echo.
-echo   Proyecto: %PROJECT_ROOT%
-echo   Para iniciar, ejecuta:  run.bat
+echo   Setup completado.
+echo   Siguiente paso: run.bat
 echo =============================================
 echo.
 pause
+exit /b 0
+
+:ensure_module
+set "IMPORT_NAME=%~1"
+set "PIP_SPEC=%~2"
+%PY% -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('%IMPORT_NAME%') else 1)" >nul 2>&1
+if errorlevel 1 (
+    echo   INSTALL: %PIP_SPEC%
+    %PY% -m pip install %PIP_SPEC%
+    if errorlevel 1 exit /b 1
+) else (
+    echo   OK: %PIP_SPEC%
+)
+exit /b 0
+
+:ensure_optional_module
+set "IMPORT_NAME=%~1"
+set "PIP_SPEC=%~2"
+set "EXTRA_ARGS=%~3"
+%PY% -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('%IMPORT_NAME%') else 1)" >nul 2>&1
+if errorlevel 1 (
+    echo   OPTIONAL: %PIP_SPEC%
+    %PY% -m pip install %PIP_SPEC% %EXTRA_ARGS%
+    if errorlevel 1 (
+        echo   AVISO: %PIP_SPEC% no se pudo instalar. Se usara fallback.
+        exit /b 0
+    )
+) else (
+    echo   OK: %PIP_SPEC%
+)
+exit /b 0
+
+:ensure_cuda_env
+set "CUDA_BASE=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4"
+if exist "%CUDA_BASE%\bin\nvcc.exe" (
+    if not defined CUDA_PATH set "CUDA_PATH=%CUDA_BASE%"
+    if not defined CUDA_HOME set "CUDA_HOME=%CUDA_BASE%"
+    echo "%PATH%" | findstr /i "CUDA" >nul 2>&1
+    if errorlevel 1 (
+        set "PATH=%CUDA_BASE%\bin;%PATH%"
+        echo   OK: CUDA bin agregado al PATH (nvcc accesible)
+    ) else (
+        echo   OK: CUDA ya en PATH
+    )
+    echo   OK: CUDA_PATH=%CUDA_PATH%
+    echo   OK: CUDA_HOME=%CUDA_HOME%
+) else (
+    echo   AVISO: nvcc.exe no encontrado en %CUDA_BASE%\bin.
+    echo   flash-attn necesita CUDA Toolkit 12.4+ con nvcc.exe.
+    echo   Descarga: https://developer.nvidia.com/cuda-downloads
+)
+exit /b 0
+
+:ensure_torch_cuda
+%PY% -c "import torch, sys; sys.exit(0 if torch.cuda.is_available() and torch.version.cuda else 1)" >nul 2>&1
+if errorlevel 1 (
+    echo   INSTALL: torch + torchaudio CUDA 12.4
+    %PY% -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+    if errorlevel 1 exit /b 1
+) else (
+    for /f "usebackq delims=" %%c in (`%PY% -c "import torch; print(torch.version.cuda)" 2^>nul`) do set "TORCH_CUDA=%%c"
+    echo   OK: torch CUDA !TORCH_CUDA!
+)
+exit /b 0

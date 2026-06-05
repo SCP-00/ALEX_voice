@@ -1,6 +1,7 @@
 # 📍 Alex Voice — Rutas y Referencias
 
 > Archivo de referencia creado el 2026-06-04.
+> Ultima auditoria: 2026-06-05.
 > ⚠️ **MANTENER ACTUALIZADO** — especialmente rutas de modelos y CUDA toolkit.
 
 ---
@@ -39,7 +40,7 @@
 | **CUDA soporte** | ✅ | `torch.cuda.is_available() = True` |
 | **GPU detectada** | ✅ | NVIDIA GeForce RTX 3050 6GB Laptop GPU |
 | **CUDA Toolkit (nvcc)** | ✅ | `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4\bin\nvcc.exe` |
-| **CUDA_PATH / CUDA_HOME** | ⚠️ | No configuradas en PATH (nvcc existe pero $env:CUDA_PATH no está set) |
+| **CUDA_PATH / CUDA_HOME** | ✅ | Ahora configuradas via `setx` (persistente) + `setup.bat` las auto-configura al ejecutar |
 | **xformers** | ✅ | `xformers 0.0.29.post3` (sin Triton en Windows) |
 | **flash-attn** | ❌ | **NO INSTALADO** — necesita `cl.exe` (workload C++ de VS Build Tools) |
 
@@ -145,9 +146,10 @@ pip install flash-attn --no-build-isolation
 
 | Modelo | Estado | Ruta / Nota |
 |:-------|:------:|:------------|
-| **Qwen2.5-1.5B-Q4_K_M** (~1.1GB) | ❌ | `models\qwen2.5-1.5b-q4_k_m.gguf` — descargar manualmente de HuggingFace |
+| **Qwen2.5-1.5B-Q4_K_M** (~1.1GB) | Requerido para 3000 | `models\qwen2.5-1.5b-q4_k_m.gguf` — `setup.bat` lo descarga si falta |
 | **Qwen3-TTS-CustomVoice** (~2GB) | — | Se descarga automáticamente al primer uso |
 | **faster-whisper base** (~150MB) | — | Se descarga automáticamente al primer uso |
+| **faster-whisper small** (~466MB) | Bajo demanda | Se usa para ASR `es`/`ja` si seleccionas el idioma |
 
 ---
 
@@ -156,7 +158,7 @@ pip install flash-attn --no-build-isolation
 | Servidor | Puerto | Script | Descripción |
 |:---------|:------:|:-------|:------------|
 | **Teacher+Conversation** | `3000` | `B/server.py` | LLM + TTS híbrido |
-| **llama-server** | `8081` | `llama-server-bin\llama-server.exe` | Backend LLM GPU |
+| **llama-server** | `8081` | `llama-server-bin\llama-server.exe` | Backend LLM GPU; fallback: `llama.cpp\llama-server.exe`, `LLAMA_EXE`, `LLAMA_DIR` |
 | **Translator** | `3003` | `translator_server.py` | Traducción + TTS calidad |
 
 ---
@@ -172,11 +174,24 @@ pip install flash-attn --no-build-isolation
 | `frontend/translator/index.html` | UI del traductor |
 | `frontend/plan-b/index.html` | UI de Teacher+Conversation |
 | `shared/translator.py` | Módulo compartido (prompts en inglés) |
-| `setup.bat` | Instalador automático |
+| `setup.bat` | Instalador/verificador idempotente |
 | `run.bat` | Menú de inicio interactivo |
 | `models/` | Modelos LLM descargados |
-| `llama-server-bin/` | Binario de llama.cpp |
+| `llama-server-bin/` | Binario de llama.cpp descargado por setup |
 | `PATHS.md` | **Este documento — rutas y referencias** |
+
+---
+
+## Lanzadores `.bat`
+
+| Archivo | Estado recomendado |
+|:--|:--|
+| `setup.bat` | Mantener |
+| `run.bat` | Mantener como entrada principal |
+| `start_server.bat` | Legacy de Plan A; no recomendado |
+| `B\start.bat` | Duplicado de launcher; opcional |
+| `B\start_plan_b.bat` | Duplicado de launcher; opcional |
+| `_start_teacher.bat` | Local no trackeado; no recomendado porque no arranca `llama-server` |
 
 ---
 
