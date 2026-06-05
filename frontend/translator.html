@@ -101,6 +101,22 @@ textarea:focus{border-color:var(--translator);box-shadow:0 0 0 2px rgba(139,92,2
 .loading .spinner{width:24px;height:24px;border:2px solid var(--border);border-top-color:var(--translator);border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 8px}
 @keyframes spin{to{transform:rotate(360deg)}}
 
+/* Voice Settings (collapsible) */
+.voice-toggle{display:flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--textDim);font-size:11px;font-family:inherit;cursor:pointer;transition:all .2s;margin-bottom:8px}
+.voice-toggle:hover{border-color:var(--translator);color:var(--text)}
+.voice-toggle.open{border-color:var(--translator);color:var(--translator)}
+.voice-panel{display:none;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:12px;animation:fadeIn .25s}
+.voice-panel.open{display:block}
+.voice-row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.voice-row:last-child{margin-bottom:0}
+.voice-row label{font-size:11px;color:var(--textDim);min-width:60px;font-weight:500}
+.voice-row input[type=range]{flex:1;height:4px;-webkit-appearance:none;appearance:none;background:var(--border);border-radius:2px;outline:none;transition:background .2s}
+.voice-row input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--translator);cursor:pointer;border:2px solid var(--surface);box-shadow:0 0 4px rgba(139,92,246,.4)}
+.voice-row input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--translator);cursor:pointer;border:2px solid var(--surface)}
+.voice-row .range-val{font-size:10px;color:var(--textDim);min-width:28px;text-align:right}
+.voice-row .range-labels{display:flex;justify-content:space-between;font-size:9px;color:var(--textDim);padding:0 2px}
+.voice-preview{font-size:10px;color:var(--textDim);font-style:italic;padding:6px 8px;background:var(--surface2);border-radius:4px;margin-top:8px;line-height:1.4;min-height:20px}
+
 /* ASR transcript */
 .asr-transcript{font-size:11px;color:var(--warn);min-height:18px;margin-bottom:8px}
 
@@ -126,7 +142,7 @@ textarea:focus{border-color:var(--translator);box-shadow:0 0 0 2px rgba(139,92,2
   <div class="lang-row">
     <div class="lang-group">
       <label>Desde</label>
-      <select class="lang-select" id="fromLang">
+      <select class="lang-select" id="fromLang" onchange="updateConvLabels()">
         <option value="auto">🌐 Detectar automático</option>
         <option value="en">🇬🇧 Inglés</option>
         <option value="es">🇪🇸 Español</option>
@@ -141,7 +157,7 @@ textarea:focus{border-color:var(--translator);box-shadow:0 0 0 2px rgba(139,92,2
     <button class="swap-btn" onclick="swapLanguages()" title="Intercambiar idiomas">⇄</button>
     <div class="lang-group">
       <label>Hasta</label>
-      <select class="lang-select" id="toLang">
+      <select class="lang-select" id="toLang" onchange="updateConvLabels()">
         <option value="es">🇪🇸 Español</option>
         <option value="en">🇬🇧 Inglés</option>
         <option value="ja">🇯🇵 Japonés</option>
@@ -160,9 +176,34 @@ textarea:focus{border-color:var(--translator);box-shadow:0 0 0 2px rgba(139,92,2
     <button class="mode-btn" id="modeConv" onclick="setTranslatorMode('conversation')">💬 Conversación (2 personas)</button>
   </div>
 
+  <!-- Voice Settings (collapsible) -->
+  <button class="voice-toggle" id="voiceToggle" onclick="toggleVoicePanel()">
+    <span>🎙️</span>
+    <span>Ajustes de voz</span>
+    <span style="margin-left:auto;font-size:10px">▾</span>
+  </button>
+  <div class="voice-panel" id="voicePanel">
+    <div class="voice-row">
+      <label>Calma</label>
+      <input type="range" id="sliderCalm" min="0" max="100" value="70" oninput="updateVoicePreview()">
+      <span class="range-val" id="valCalm">70</span>
+    </div>
+    <div class="voice-row">
+      <label>Velocidad</label>
+      <input type="range" id="sliderSpeed" min="0" max="100" value="40" oninput="updateVoicePreview()">
+      <span class="range-val" id="valSpeed">40</span>
+    </div>
+    <div class="voice-row">
+      <label>Calidez</label>
+      <input type="range" id="sliderWarmth" min="0" max="100" value="65" oninput="updateVoicePreview()">
+      <span class="range-val" id="valWarmth">65</span>
+    </div>
+    <div class="voice-preview" id="voicePreview">Voz tranquila y cálida, ritmo pausado.</div>
+  </div>
+
   <!-- Input (hidden in conversation mode) -->
   <div class="input-area" id="simpleInputArea">
-    <textarea id="input" placeholder="Escribe o usa el micrófono..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();translate()}"></textarea>
+    <textarea id="input" placeholder="Escribe o usa el micrófono... (Enter=traducir, Shift+Enter=nueva línea, Ctrl+Enter=forzar traducción, Esc=limpiar)"></textarea>
     <button class="mic-btn" id="micBtn" onclick="toggleMic()" title="Grabar voz">🎤</button>
   </div>
   <div class="asr-transcript" id="asrTranscript"></div>
@@ -264,9 +305,11 @@ const LANG_TTS = {
   'pt': 'Portuguese',
 };
 
-// Speakers per idioma (Qwen3-TTS-CustomVoice usa descripción de voz)
+// Speakers per idioma (Qwen3-TTS-CustomVoice)
+//   English: Aiden (americano, rango medio claro, naturalmente calmado)
+//   Spanish/others: Serena (cálida y suave)
 const SPEAKERS = {
-  'en': 'Vivian',
+  'en': 'Aiden',
   'es': 'Serena',
   'ja': 'Ono_Anna',
   'fr': 'Serena',
@@ -275,6 +318,65 @@ const SPEAKERS = {
   'de': 'Serena',
   'pt': 'Serena',
 };
+
+
+
+// ── VOICE SETTINGS (collapsible sliders) ──
+let voicePanelOpen = false;
+
+function toggleVoicePanel() {
+  voicePanelOpen = !voicePanelOpen;
+  document.getElementById('voicePanel').classList.toggle('open', voicePanelOpen);
+  document.getElementById('voiceToggle').classList.toggle('open', voicePanelOpen);
+}
+
+function buildInstruct(lang) {
+  const calm = parseInt(document.getElementById('sliderCalm').value);
+  const speed = parseInt(document.getElementById('sliderSpeed').value);
+  const warmth = parseInt(document.getElementById('sliderWarmth').value);
+
+  const calmMap = {
+    'en': ['energetic and lively', 'natural', 'calm, soft, and mellow'],
+    'es': ['enérgica y animada', 'natural', 'tranquila, suave y melosa'],
+    'ja': ['元気で活発な', '自然な', '穏やかで柔らかな'],
+    'fr': ['énergique et vive', 'naturelle', 'calme, douce et moelleuse'],
+    'ko': ['활기차고 생동감 있는', '자연스러운', '차분하고 부드러운'],
+    'zh': ['充满活力的', '自然的', '平静柔和的'],
+    'de': ['energiegeladen und lebhaft', 'natürlich', 'ruhig, sanft und weich'],
+    'pt': ['enérgica e animada', 'natural', 'calma, suave e macia'],
+  };
+  const cArr = calmMap[lang] || calmMap['es'];
+  const calmIdx = calm <= 30 ? 0 : (calm <= 60 ? 1 : 2);
+  const calText = cArr[calmIdx];
+
+  let speedText, warmthText;
+  if (lang === 'es') {
+    speedText = speed <= 30 ? 'Habla lento y pausado.' : (speed <= 60 ? 'Habla a un ritmo natural.' : 'Habla un poco más rápido.');
+    warmthText = warmth <= 30 ? 'Usa un tono neutro.' : (warmth <= 65 ? 'Usa un tono cálido.' : 'Usa un tono muy cálido y expresivo.');
+    return speedText + ' Voz ' + calText + '. ' + warmthText;
+  } else if (lang === 'ja') {
+    speedText = speed <= 30 ? 'ゆっくりと話してください。' : (speed <= 60 ? '自然な速度で話してください。' : '少し速く話してください。');
+    warmthText = warmth <= 30 ? '中立的なトーンで。' : (warmth <= 65 ? '温かみのあるトーンで。' : 'とても温かく表現豊かなトーンで。');
+    return speedText + ' ' + calText + '声。 ' + warmthText;
+  } else {
+    speedText = speed <= 30 ? 'Speak slowly and deliberately.' : (speed <= 60 ? 'Speak at a natural pace.' : 'Speak slightly faster.');
+    warmthText = warmth <= 30 ? 'Use a neutral tone.' : (warmth <= 65 ? 'Use a warm tone.' : 'Use a very warm and expressive tone.');
+    return speedText + ' Use a ' + calText + ' voice. ' + warmthText;
+  }
+}
+
+function updateVoicePreview() {
+  const calm = document.getElementById('sliderCalm');
+  const speed = document.getElementById('sliderSpeed');
+  const warmth = document.getElementById('sliderWarmth');
+  document.getElementById('valCalm').textContent = calm.value;
+  document.getElementById('valSpeed').textContent = speed.value;
+  document.getElementById('valWarmth').textContent = warmth.value;
+  // Show preview in current UI language (mostly ES)
+  const toLang = document.getElementById('toLang').value;
+  const preview = buildInstruct(toLang);
+  document.getElementById('voicePreview').textContent = '💬 ' + preview;
+}
 
 function setStatus(msg, busy) {
   const el = document.getElementById('footerStatus');
@@ -291,9 +393,20 @@ function showLoading(show, text) {
 function swapLanguages() {
   const from = document.getElementById('fromLang');
   const to = document.getElementById('toLang');
-  // Don't swap if from is auto
   if (from.value === 'auto') return;
-  [from.value, to.value] = [to.value, from.value];
+  const temp = from.value;
+  from.value = to.value;
+  to.value = temp;
+  updateConvLabels();
+}
+
+function updateConvLabels() {
+  const fromVal = document.getElementById('fromLang').value;
+  const toVal = document.getElementById('toLang').value;
+  const langNames = {'en':'🇬🇧 Inglés','es':'🇪🇸 Español','ja':'🇯🇵 Japonés','fr':'🇫🇷 Francés','ko':'🇰🇷 Coreano','zh':'🇨🇳 Chino','de':'🇩🇪 Alemán','pt':'🇵🇹 Portugués'};
+  document.getElementById('convLangA').textContent = langNames[fromVal] || '🌐 Auto';
+  document.getElementById('convLangB').textContent = langNames[toVal] || '🌐 Auto';
+  updateVoicePreview();
 }
 
 async function translate() {
@@ -351,6 +464,8 @@ async function translate() {
     
     showLoading(true, 'Generando audio con Qwen3-TTS...');
     
+    const instruct = buildInstruct(data.to_lang);
+    
     const audioR = await fetch(API + '/api/tts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -358,6 +473,9 @@ async function translate() {
         text: data.translation, 
         language: ttsLang,
         speaker: speaker,
+        instruct: instruct,
+        max_new_tokens: 3072,
+        temperature: 0.7,
       }),
     });
     
@@ -674,6 +792,8 @@ async function toggleConvMic(person) {
       const ttsLang = LANG_TTS[toLang] || 'Spanish';
       const speaker = SPEAKERS[toLang] || 'Serena';
       
+      const instruct = buildInstruct(toLang);
+      
       const audioR = await fetch(API + '/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -681,6 +801,9 @@ async function toggleConvMic(person) {
           text: transData.translation, 
           language: ttsLang,
           speaker: speaker,
+          instruct: instruct,
+          max_new_tokens: 3072,
+          temperature: 0.7,
         }),
       });
       
@@ -760,8 +883,38 @@ async function preloadModel() {
   }
 }
 
+// ── KEYBOARD SHORTCUTS ──
+// Textarea: Enter=translate, Shift+Enter=newline, Ctrl+Enter=force translate, Esc=clear
+document.getElementById('input').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey) {
+    e.preventDefault();
+    translate();
+  } else if (e.key === 'Enter' && e.ctrlKey) {
+    e.preventDefault();
+    translate();
+  }
+});
+
+// Global: Esc = limpiar input y resultados
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    const input = document.getElementById('input');
+    if (document.activeElement === input) {
+      input.value = '';
+      document.getElementById('asrTranscript').textContent = '';
+      document.getElementById('resultOriginal').classList.remove('show');
+      document.getElementById('resultTranslation').classList.remove('show');
+      if (currentAudioUrl) {
+        URL.revokeObjectURL(currentAudioUrl);
+        currentAudioUrl = null;
+      }
+    }
+  }
+});
+
 // Initialize
 setStatus('✅ Iniciando...', true);
+updateConvLabels();
 preloadModel();
 </script>
 </body>

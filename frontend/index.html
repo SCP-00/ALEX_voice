@@ -171,13 +171,18 @@ function addMsg(role, text, extra) {
   if (extra.parsed && Object.keys(extra.parsed).length > 0) {
     const p = extra.parsed;
     
-    // TEXT card (original/teaching language - this is what TTS reads)
+    // TEXT card (original/teaching language)
     if (p.text) {
       const tc = document.createElement('div');
       tc.style.cssText = 'background:var(--surface);border:1px solid var(--accent);border-radius:6px;padding:8px 10px;margin-bottom:6px';
-      tc.innerHTML = '<div style="font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">🔊 ' + 
-        (extra.mode === 'translator' ? 'Texto Original' : 'Idioma Objetivo') + '</div>' +
+      let label = extra.mode === 'translator' ? 'Texto Original' : 'Idioma Objetivo';
+      let html = '<div style="font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">🔊 ' + label + '</div>' +
         '<div style="font-size:16px;font-weight:600;line-height:1.4">' + escHtml(p.text) + '</div>';
+      // TTS_READING: Latin script version for TTS (shown subtly below TEXT)
+      if (p.tts_reading) {
+        html += '<div style="font-size:11px;color:var(--textDim);font-style:italic;margin-top:3px;border-top:1px solid var(--border);padding-top:3px">🔊 TTS: ' + escHtml(p.tts_reading) + '</div>';
+      }
+      tc.innerHTML = html;
       d.appendChild(tc);
     }
     
@@ -218,8 +223,8 @@ function addMsg(role, text, extra) {
       d.appendChild(exc);
     }
     
-    // Store TTS text
-    extra.ttsText = p.text || text;
+    // Store TTS text: priority TTS_READING → TEXT → full response
+    extra.ttsText = p.tts_reading || p.text || text;
   } else {
     // No structured output - show raw text
     const content = document.createElement('span');
@@ -296,7 +301,8 @@ async function send() {
   try {
     // Build messages array - use mode parameter instead of raw system prompt
     const userMsg = { role: 'user', content: text };
-    const msgs = [userMsg];
+    // Incluir historial completo para contexto conversacional
+    const msgs = messageHistory.concat([userMsg]);
     
     const r = await fetch(API_BASE + '/api/chat', {
       method: 'POST',
@@ -323,7 +329,7 @@ async function send() {
     setStatus(isCached ? '⚡ Respuesta desde caché' : '✅ Listo');
     
     // Auto-speak - only the TTS-relevant text
-    const ttsText = parsed.text || content;
+    const ttsText = parsed.tts_reading || parsed.text || content;
     if (ttsText.length < 500 && !isRecording) {
       speakTTS(ttsText);
     }

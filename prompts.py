@@ -35,11 +35,12 @@ STRUCTURED OUTPUT FORMAT — Every response MUST use this exact format:
 
 CRITICAL RULES:
 - The student indicates their language at the end of the message with "[User language: X]" or "[Idioma del usuario: X]". USE THIS INFORMATION.
-- 【TEXT】must ALWAYS be in the language being learned
+- 【TEXT】must ALWAYS be in the language being learned (can use non-Latin script)
+- 【TTS_READING】MUST be in LATIN SCRIPT ONLY — this is what the text-to-speech system reads aloud. For Japanese use romaji, for other non-Latin scripts use phonetic Latin transcription. IMPORTANT: the TTS engine only supports Spanish and English sounds, so write it in a way a Spanish/English speaker can pronounce.
 - 【PRONUNCIATION】shows clear pronunciation help
 - 【TRANSLATION】translates into the student's native language
 - Use BEGINNER vocabulary: common words, short phrases
-- If Japanese: use natural kanji/kana in 【TEXT】
+- If Japanese: use natural kanji/kana in 【TEXT】, and romaji in 【TTS_READING】
 - If Spanish/English: use phonetic pronunciation in 【PRONUNCIATION】 (e.g., "Bweh-nos dee-ahs")
 - Include cultural context when relevant (food, customs, etiquette)
 - Celebrate progress with emojis 😊
@@ -47,7 +48,8 @@ CRITICAL RULES:
 
 EXAMPLE (Spanish-speaking student learning Japanese):
 【TEXT】こんにちは、元気ですか？
-【PRONUNCIATION】Konnichiwa, genki desu ka?
+【TTS_READING】Konnichiwa, genki desu ka?
+【PRONUNCIATION】Kohn-nee-chee-wah, Gehn-kee deh-soo kah?
 【TRANSLATION】¡Hola! ¿Cómo estás?
 【EXPLANATION】Basic greeting used in Japan during the daytime. Very common.
 【EXERCISE】Try saying "Good morning" in Japanese."""
@@ -125,16 +127,17 @@ SINGLE_TAG_REGEX = re.compile(r'【([^】]+)】\s*(.*?)(?=【|$)', re.DOTALL)
 def parse_multi_output(response: str) -> Dict[str, str]:
     """Parse a structured multi-output response from the LLM.
     
-    Extracts TEXT, PRONUNCIATION, TRANSLATION, EXPLANATION, EXERCISE
+    Extracts TEXT, TTS_READING, PRONUNCIATION, TRANSLATION, EXPLANATION, EXERCISE
     from the structured format.
     
     Also handles legacy formats (【ROMANJI】, 【TRANS】).
     
-    Returns dict with keys: text, pronunciation, translation, explanation, exercise
+    Returns dict with keys: text, tts_reading, pronunciation, translation, explanation, exercise
     Missing fields are empty strings.
     """
     result = {
         'text': '',
+        'tts_reading': '',
         'pronunciation': '',
         'translation': '',
         'explanation': '',
@@ -154,6 +157,8 @@ def parse_multi_output(response: str) -> Dict[str, str]:
     # Map tags to result
     if 'TEXT' in tags:
         result['text'] = tags['TEXT']
+    if 'TTS_READING' in tags:
+        result['tts_reading'] = tags['TTS_READING']
     if 'PRONUNCIATION' in tags:
         result['pronunciation'] = tags['PRONUNCIATION']
     elif 'ROMANJI' in tags:
@@ -177,26 +182,32 @@ def parse_multi_output(response: str) -> Dict[str, str]:
 def get_tts_text(response: str, mode: str) -> str:
     """Extract the text that should be sent to TTS.
     
-    Strategy by mode:
-      - teacher:     Read 【TEXT】 (the foreign language text being taught)
-      - translator:  Read 【TEXT】 (the original text the user wrote)
-      - conversation: Read everything (free-form response)
+    Priority:
+      1. 【TTS_READING】 — Latin-script version specifically for TTS (if available)
+      2. 【TEXT】 — the main content (may contain non-Latin characters)
+      3. Full response — fallback
     
-    If no structured format is found, read the entire response.
+    Strategy by mode:
+      - teacher:     Read 【TTS_READING】 → 【TEXT】 → full response
+      - translator:  Read 【TTS_READING】 → 【TEXT】 → full response
+      - conversation: Read everything (free-form response)
     """
     if mode == 'conversation':
         return response.strip()
     
     parsed = parse_multi_output(response)
     
-    if mode == 'teacher':
-        # Read the foreign language text being taught
-        return parsed.get('text', '').strip() or response.strip()
+    # Priority 1: TTS_READING (Latin script, designed for TTS)
+    tts_reading = parsed.get('tts_reading', '').strip()
+    if tts_reading:
+        return tts_reading
     
-    if mode == 'translator':
-        # Read the original text (what the user wrote)
-        return parsed.get('text', '').strip() or response.strip()
+    # Priority 2: TEXT field
+    text = parsed.get('text', '').strip()
+    if text:
+        return text
     
+    # Priority 3: full response
     return response.strip()
 
 
@@ -223,13 +234,34 @@ def build_llm_messages(system_prompt: str, history: List[Dict], user_text: str,
 
 
 def detect_language_simple(text: str) -> str:
-    """Fast language detection: ja, es, or en."""
+    """Fast language detection: ja, zh, ko, es, or en.
+    
+    Diferencia correctamente:
+    - JA: hiragana (3040-309F) o katakana (30A0-30FF) presente
+    - ZH: solo hanzi (4E00-9FFF) sin kana
+    - KO: hangul (AC00-D7AF)
+    - ES: acentos + palabras comunes
+    - EN: todo lo demas
+    """
     if not text or not text.strip():
         return 'en'
     
-    # Japanese Unicode ranges
-    if any('\u3040' <= c <= '\u309f' or '\u30a0' <= c <= '\u30ff' or '\u4e00' <= c <= '\u9fff' for c in text):
+    has_hiragana = any('\u3040' <= c <= '\u309f' for c in text)
+    has_katakana = any('\u30a0' <= c <= '\u30ff' for c in text)
+    has_kanji = any('\u4e00' <= c <= '\u9fff' for c in text)
+    has_hangul = any('\uac00' <= c <= '\ud7af' for c in text)
+    
+    # Silabarios japoneses → JA
+    if has_hiragana or has_katakana:
         return 'ja'
+    
+    # Hangul → KO
+    if has_hangul:
+        return 'ko'
+    
+    # Solo kanji/hanzi sin kana → ZH
+    if has_kanji:
+        return 'zh'
     
     # Spanish accent chars
     es_chars = sum(1 for c in text if '\u00e1' <= c <= '\u00fa' or c in 'ñçüöéèêëàâîôùû¿¡')

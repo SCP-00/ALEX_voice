@@ -20,6 +20,12 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from collections import OrderedDict
 
+# Regex compilada: caracteres seguros para TTS (Latin + español)
+_TTS_SAFE_RE = re.compile(
+    r"[^\x00-\x7F\u00C0-\u024F\u1E00-\u1EFF"
+    r"\u0300-\u036F\s0-9.,!?;:\'\"¡¿\(\)\[\]\{\}\-–—…&@#%*+=/<>~`$€£¥°]"
+)
+
 # ── Shared prompts module ─────────────────────────────────
 from prompts import parse_multi_output, get_tts_text, get_system_prompt, build_llm_messages, detect_language_simple
 
@@ -113,6 +119,21 @@ try:
 except Exception:
     HAVE_NVML = False
     _safe_print("[B] [!] pynvml no disponible. Stats GPU no disponibles.")
+
+# ── Sanitizador de texto para TTS ───────────────────────────
+def _sanitize_tts_text(text):
+    """Elimina caracteres no pronunciables por Kokoro/Piper.
+    
+    Kokoro-82M solo soporta Latin + extensiones españolas.
+    Caracteres CJK, Árabe, Cirílico, etc. causan "Caracter japones"
+    o similar. Esta función los reemplaza con espacios.
+    """
+    if not text:
+        return ""
+    safe = _TTS_SAFE_RE.sub(" ", text)
+    safe = re.sub(r"\s+", " ", safe).strip()
+    return safe
+
 
 # ── Kokoro-82M TTS ─────────────────────────────────────────
 HAVE_KOKORO = False
@@ -472,12 +493,36 @@ class StatsCollector:
 
 # ── Detección de idioma ────────────────────────────────────
 def detect_language(text):
-    """Detecta es/en/ja en un texto."""
+    """Detecta es/en/ja/zh/ko en un texto.
+    
+    Diferencia correctamente:
+    - JA: tiene hiragana (3040-309F) o katakana (30A0-30FF)
+    - ZH: solo kanji/hanzi (4E00-9FFF) sin kana
+    - KO: hangul (AC00-D7AF)
+    - ES: acentos + palabras comunes
+    - EN: todo lo demas
+    """
     if not text.strip():
         return 'en'
-    ja_chars = sum(1 for c in text if '\u3040' <= c <= '\u309f' or '\u30a0' <= c <= '\u30ff' or '\u4e00' <= c <= '\u9fff')
-    if ja_chars > 0:
+    
+    has_hiragana = any('\u3040' <= c <= '\u309f' for c in text)
+    has_katakana = any('\u30a0' <= c <= '\u30ff' for c in text)
+    has_kanji = any('\u4e00' <= c <= '\u9fff' for c in text)
+    has_hangul = any('\uac00' <= c <= '\ud7af' for c in text)
+    
+    # Silabarios japoneses → JA (incluso si mezcla con kanji)
+    if has_hiragana or has_katakana:
         return 'ja'
+    
+    # Hangul coreano → KO
+    if has_hangul:
+        return 'ko'
+    
+    # Solo kanji/hanzi sin kana → ZH (chino)
+    if has_kanji:
+        return 'zh'
+    
+    # Español: acentos + palabras clave
     es_chars = sum(1 for c in text if '\u00e1' <= c <= '\u00fa' or c in 'ñçüöéèêëàâîôùû¿¡')
     es_words = {'hola','gracias','como','estas','muy','bien','que','el','la','los','las','por','para','con','sin','es','son','del','más','todo','casa','agua','vida','mundo','día','noche','hoy','ayer','mañana','adios','luego','entonces','también','solo','cada','bienvenido','amigo','señor','señora','hablar','tener','hacer','poder','saber','querer','bueno','buena','grande','mejor','siempre','nunca','pronto','tarde','donde','cuando','porque','cual','quien','cuanto','año','semana','mes','lunes','martes','miercoles','jueves','viernes','sabado','domingo','saludos','gracias','muchas','favor','permiso','disculpa','siento','perdon','feliz','contento','cansado','bienvenido','nosotros','ellos','este','esta','ese','esa','aquel','leer','escribir','correr','comer','beber','dormir','vivir','morir','nacer','crecer','pensar','creer','recordar','olvidar','gustar','esperar','viajar','jugar','trabajar','estudiar','enseñar','aprender','entender','conocer','buscar','encontrar','perder','ganar','pagar','vender','comprar','llevar','traer','dejar','entrar','salir','subir','bajar','abrir','cerrar','empezar','terminar','cambiar','mejorar','empeorar','arreglar','romper','limpiar','ensuciar','cocinar','cantar','bailar','pintar','escribir','leer','correr','saltar','nadar','volar','caminar','sentar','parar'}
     words = [w.strip('.,!?;:\'"()[]{}') for w in text.lower().split() if w.strip('.,!?;:\'"()[]{}')]
@@ -486,6 +531,7 @@ def detect_language(text):
     es_count = sum(1 for w in words if w in es_words)
     if es_count > 0 or es_chars > 0:
         return 'es'
+    
     return 'en'
 
 def _run_piper_file(text, model_path, piper_exe):
@@ -732,6 +778,12 @@ class Handler(SimpleHTTPRequestHandler):
                 self._json_response({"error": "texto vacio"})
                 return
 
+            # Sanitizar: eliminar caracteres no pronunciables (CJK, etc.)
+            text = _sanitize_tts_text(text)
+            if not text or len(text) < 2:
+                self._json_response({"error": "Texto sin caracteres pronunciables"})
+                return
+
             # Determinar idioma
             if lang not in ('es', 'en'):
                 detected = detect_language(text)
@@ -828,6 +880,12 @@ class Handler(SimpleHTTPRequestHandler):
             if not text:
                 self._json_response({"error": "texto vacio"})
                 return
+            # Sanitizar: eliminar caracteres no pronunciables (CJK, etc.)
+            text = _sanitize_tts_text(text)
+            if not text or len(text) < 2:
+                self._json_response({"error": "Texto sin caracteres pronunciables"})
+                return
+
             if lang not in ('es', 'en'):
                 detected = detect_language(text)
                 lang = detected if detected in ('es', 'en') else 'es'

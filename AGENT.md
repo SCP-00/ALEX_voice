@@ -40,8 +40,8 @@ LLAMA_DOCS=/c/Users/andyh/Documents/llama-b9479-bin-win-cuda-13.3-x64
 ### Servidores
 | Puerto | Servicio | Script | Componentes |
 |:------:|:---------|:-------|:------------|
-| 3000 | Teacher + Conversation | `B/server.py` via `launcher.py` | LLM GPU + Kokoro TTS CPU + Piper fallback + faster-whisper ASR |
-| 3003 | Translator | `translator_server.py` | argos CPU + Qwen3-TTS GPU + faster-whisper ASR |
+| 3000 | Teacher + Conversation | `server.py` via `launcher.py` | LLM GPU + Kokoro TTS CPU + Piper fallback + faster-whisper ASR |
+| 3003 | Translator | `translator.py` | argos CPU + Qwen3-TTS GPU + faster-whisper ASR |
 | 8081 | llama-server | `llama-server.exe` | Backend LLM GPU (chatml, no-warmup, no-ui) |
 
 ### Modelo Principal
@@ -59,9 +59,9 @@ LLAMA_DOCS=/c/Users/andyh/Documents/llama-b9479-bin-win-cuda-13.3-x64
 ### TTS
 | Motor | Puerto | Tipo | Detalle |
 |-------|:------:|:-----|:--------|
-| Kokoro-82M 🏆 | 3000 | CPU, pip install | Primario para Teacher+Conversation. Voz ES `ef_dora`, EN `af_heart`. Lazy-load ~30s primera vez. Calidad buena, streaming real. |
+| Kokoro-82M 🏆 | 3000 | CPU, pip install | Primario para Teacher+Conversation. Voz ES `ef_dora`, EN `af_heart`. Lazy-load ~30s primera vez. Calidad buena, streaming real. **Solo Latin** — `_sanitize_tts_text()` elimina caracteres no pronunciables (CJK, etc.) como red de seguridad. |
 | Piper (Python API) | 3000 | CPU, pip install | Fallback si Kokoro falla. Modelos .onnx en `models/`: `es_ES-sharvard-medium.onnx` (77MB) + `en_US-lessac-medium.onnx` (63MB). Latencia ~45ms. |
-| Qwen3-TTS-CustomVoice | 3003 | GPU, ~2GB VRAM | TTS de alta calidad para Translator. 10 idiomas nativos sin coste extra. Voces: Vivian (EN), Serena (ES), Ono_Anna (JA). Usa `torch.compile` + SDPA attention. |
+| Qwen3-TTS-CustomVoice | 3003 | GPU, ~2GB VRAM | TTS de alta calidad para Translator. 10 idiomas nativos sin coste extra. Voces: Aiden (EN, calmado), Serena (ES), Ono_Anna (JA). Usa `torch.compile` + SDPA attention. Sliders de voz colapsables (calma/velocidad/calidez). |
 
 ### Librerías Instaladas (via pip)
 | Librería | Propósito |
@@ -72,6 +72,13 @@ LLAMA_DOCS=/c/Users/andyh/Documents/llama-b9479-bin-win-cuda-13.3-x64
 | `argostranslate` | Traducción offline CPU EN/ES/JA (3003) |
 | `faster-whisper` | ASR multilingüe CPU (3000 + 3003) |
 | `psutil` + `pynvml` | Monitorización sistema + GPU |
+
+### Características Recientes
+- **TTS_READING**: Teacher mode genera campo `【TTS_READING】` en Latin script para que Kokoro lea correctamente (romaji para JA, fonética para otros). `get_tts_text()` prioriza: TTS_READING → TEXT → respuesta completa.
+- **Lenguaje detect**: `detect_language()` diferencia JA (hiragana/katakana) vs ZH (solo kanji/hanzi) vs KO (hangul). Ya no detecta chino como japones.
+- **Memoria conversacional**: `frontend/index.html` envía `messageHistory` completo al backend. ~20 mensajes de contexto.
+- **Sliders de voz**: Translator (3003) tiene panel colapsable con sliders Calma/Velocidad/Calidez que generan instruct dinámico.
+- **Chunking TTS**: `_chunk_text()` divide textos largos por oraciones, genera audio por chunk, concatena con `np.concatenate`.
 
 ### GitHub
 - Remote: `https://github.com/SCP-00/ALEX_voice.git`

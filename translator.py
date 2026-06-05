@@ -161,6 +161,30 @@ _qwen3_model = None
 _qwen3_lock = threading.Lock()
 _qwen3_warmup_done = False
 
+# Limite por chunk para TTS (caracteres)
+_MAX_TTS_CHARS = 600
+
+
+def _chunk_text(text, max_chars=_MAX_TTS_CHARS):
+    """Split text at sentence boundaries for chunked TTS generation."""
+    if len(text) <= max_chars:
+        return [text]
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    chunks = []
+    current = ""
+    for s in sentences:
+        if not s.strip():
+            continue
+        if len(current) + len(s) <= max_chars:
+            current = (current + " " + s).strip()
+        else:
+            if current:
+                chunks.append(current)
+            current = s
+    if current:
+        chunks.append(current)
+    return chunks
+
 # ── Atención optimizada: flash-attn o SDPA nativo de PyTorch ──
 has_flash_attn = False
 attn_mode = "sdpa"  # Default: SDPA nativo de PyTorch 2.0+ (CUDA optimizado)
@@ -253,21 +277,54 @@ def _unload_qwen3():
             torch.cuda.synchronize()
             print("[Translator] Qwen3-TTS descargado de GPU")
 
-def qwen3_synthesize(text, language, speaker='Serena'):
-    """Synthesize speech with Qwen3-TTS (optimizado)."""
+def qwen3_synthesize(text, language, speaker='Serena', instruct=None,
+                      max_new_tokens=2048, temperature=0.7):
+    """Synthesize speech with Qwen3-TTS (optimizado + chunking para textos largos).
+
+    Args:
+        text: Texto a sintetizar.
+        language: Idioma del texto (ej: 'English', 'Spanish').
+        speaker: Voz predefinida (Vivian/Serena/Ono_Anna/Aiden/etc).
+        instruct: Instruccion de voz en lenguaje natural (tono, velocidad, emocion).
+        max_new_tokens: Max tokens de audio generados por chunk. Mayor = audios mas largos.
+        temperature: Control de estabilidad (menor = mas estable, mayor = mas variado).
+    """
     if not _load_qwen3():
         return None, "Qwen3-TTS not available"
     try:
-        # OPTIMIZATION 3: inference_mode desactiva gradientes
-        with torch.inference_mode():
-            wavs, sr = _qwen3_model.generate_custom_voice(
-                text=text,
-                language=language,
-                speaker=speaker,
-            )
-        if wavs and len(wavs) > 0:
-            return (wavs[0], sr), None
-        return None, "No audio generated"
+        # Chunking: divide textos largos, genera audio por chunk, concatenado
+        chunks = _chunk_text(text)
+        all_audio = []
+        sample_rate = None
+
+        for i, chunk in enumerate(chunks):
+            kwargs = {
+                'text': chunk,
+                'language': language,
+                'speaker': speaker,
+                'max_new_tokens': max_new_tokens,
+                'temperature': temperature,
+            }
+            if instruct:
+                kwargs['instruct'] = instruct
+
+            with torch.inference_mode():
+                wavs, sr = _qwen3_model.generate_custom_voice(**kwargs)
+
+            if not wavs or len(wavs) == 0:
+                continue
+
+            sample_rate = sr
+            chunk_audio = np.asarray(wavs[0], dtype=np.float32)
+            all_audio.append(chunk_audio)
+
+        if not all_audio:
+            return None, "No audio generated"
+
+        # Concatenar todos los chunks de audio
+        full_audio = np.concatenate(all_audio) if len(all_audio) > 1 else all_audio[0]
+        return (full_audio, sample_rate), None
+
     except Exception as e:
         return None, str(e)[:200]
 
@@ -475,12 +532,19 @@ class TranslatorHandler(SimpleHTTPRequestHandler):
             text = data.get("text", "").strip()
             language = data.get("language", "Spanish")
             speaker = data.get("speaker", "Serena")
+            instruct = data.get("instruct", None)
+            max_new_tokens = data.get("max_new_tokens", 2048)
+            temperature = data.get("temperature", 0.7)
             
             if not text:
                 self._json({"error": "Empty text"})
                 return
             
-            (audio, sr), error = qwen3_synthesize(text, language, speaker)
+            (audio, sr), error = qwen3_synthesize(
+                text, language, speaker, instruct,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature
+            )
             if error:
                 self._json({"error": error})
                 return
