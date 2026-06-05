@@ -40,9 +40,9 @@
 | **CUDA soporte** | ✅ | `torch.cuda.is_available() = True` |
 | **GPU detectada** | ✅ | NVIDIA GeForce RTX 3050 6GB Laptop GPU |
 | **CUDA Toolkit (nvcc)** | ✅ | `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4\bin\nvcc.exe` |
-| **CUDA_PATH / CUDA_HOME** | ✅ | Ahora configuradas via `setx` (persistente) + `setup.bat` las auto-configura al ejecutar |
+| **CUDA_PATH / CUDA_HOME** | ⚠️ | El CUDA Toolkit completo (nvcc.exe) **NO está instalado**. Solo existe el runtime de PyTorch CUDA 12.4. Sin nvcc.exe no se puede compilar flash-attn. |
 | **xformers** | ✅ | `xformers 0.0.29.post3` (sin Triton en Windows) |
-| **flash-attn** | ❌ | **NO INSTALADO** — necesita `cl.exe` (workload C++ de VS Build Tools) |
+| **flash-attn** | ❌ | **NO INSTALADO** — necesita `cl.exe` + `nvcc.exe` (CUDA Toolkit completo). VS C++ ya instalado, pero CUDA Toolkit 12.4 con nvcc falta. |
 
 ### Atención backend (translator_server.py)
 
