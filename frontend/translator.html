@@ -115,6 +115,8 @@ textarea:focus{border-color:var(--translator);box-shadow:0 0 0 2px rgba(139,92,2
 .voice-row input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--translator);cursor:pointer;border:2px solid var(--surface)}
 .voice-row .range-val{font-size:10px;color:var(--textDim);min-width:28px;text-align:right}
 .voice-row .range-labels{display:flex;justify-content:space-between;font-size:9px;color:var(--textDim);padding:0 2px}
+.back-btn{background:var(--surface2);border:1px solid var(--border);color:var(--textDim);padding:5px 12px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px;transition:all .2s}
+.back-btn:hover{border-color:var(--translator);color:var(--text)}
 .voice-preview{font-size:10px;color:var(--textDim);font-style:italic;padding:6px 8px;background:var(--surface2);border-radius:4px;margin-top:8px;line-height:1.4;min-height:20px}
 
 /* ASR transcript */
@@ -135,6 +137,7 @@ textarea:focus{border-color:var(--translator);box-shadow:0 0 0 2px rgba(139,92,2
 <div class="header">
 <h1>🌍 Alex Voice — Traductor</h1>
 <span class="badge" id="statusBadge">Qwen3-TTS · argos</span>
+<button class="back-btn" onclick="goToMenu()">← Volver al menú</button>
 </div>
 
 <div class="main">
@@ -911,6 +914,12 @@ document.addEventListener('keydown', function(e) {
     }
   }
 });
+
+// ── Volver al menu principal ──
+function goToMenu() {
+  fetch('http://localhost:5000/api/stop', { method: 'POST' }).catch(() => {});
+  window.location.href = 'http://localhost:5000';
+}
 
 // Initialize
 setStatus('✅ Iniciando...', true);

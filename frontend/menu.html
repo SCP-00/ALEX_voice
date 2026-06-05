@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Alex Voice — Menú Principal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#080c18;--surface:#0f1629;--surface2:#1a2340;--border:#2a3a5c;--text:#dce5f5;--textDim:#7a8aaa;--accent:#3b82f6;--accent2:#2563eb;--success:#22c55e;--warn:#f59e0b;--error:#ef4444;--teacher:#3b82f6;--conv:#10b981;--translator:#8b5cf6;--glowT:rgba(59,130,246,.15);--glowC:rgba(16,185,129,.15);--glowTR:rgba(139,92,246,.15)}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px}
+
+.container{max-width:960px;width:100%}
+
+/* Header */
+.header{text-align:center;margin-bottom:40px}
+.header .logo{font-size:36px;font-weight:800;background:linear-gradient(135deg,var(--accent),var(--translator));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.header .sub{font-size:13px;color:var(--textDim);margin-top:4px;letter-spacing:2px;text-transform:uppercase}
+.header .desc{font-size:14px;color:var(--textDim);margin-top:12px;max-width:500px;margin-left:auto;margin-right:auto;line-height:1.5}
+
+/* Mode Cards */
+.modes{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px}
+.mode-card{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:28px 20px;text-align:center;cursor:pointer;transition:all .3s ease;overflow:hidden}
+.mode-card::before{content:'';position:absolute;inset:0;opacity:0;transition:opacity .3s}
+.mode-card:hover{transform:translateY(-3px)}
+.mode-card:active{transform:translateY(0)}
+
+.mode-card.teacher{--modeColor:var(--teacher);--glow:var(--glowT)}
+.mode-card.teacher::before{background:radial-gradient(ellipse at 50% 0%,var(--glowT),transparent 70%)}
+.mode-card.teacher:hover{border-color:var(--teacher);box-shadow:0 8px 30px rgba(59,130,246,.12)}
+
+.mode-card.conv{--modeColor:var(--conv);--glow:var(--glowC)}
+.mode-card.conv::before{background:radial-gradient(ellipse at 50% 0%,var(--glowC),transparent 70%)}
+.mode-card.conv:hover{border-color:var(--conv);box-shadow:0 8px 30px rgba(16,185,129,.12)}
+
+.mode-card.translator{--modeColor:var(--translator);--glow:var(--glowTR)}
+.mode-card.translator::before{background:radial-gradient(ellipse at 50% 0%,var(--glowTR),transparent 70%)}
+.mode-card.translator:hover{border-color:var(--translator);box-shadow:0 8px 30px rgba(139,92,246,.12)}
+
+.mode-card .icon{font-size:40px;margin-bottom:12px;position:relative}
+.mode-card h3{font-size:18px;font-weight:700;margin-bottom:6px;position:relative}
+.mode-card .teacher h3{color:var(--teacher)}
+.mode-card.conv h3{color:var(--conv)}
+.mode-card.translator h3{color:var(--translator)}
+.mode-card p{font-size:12px;color:var(--textDim);line-height:1.5;position:relative}
+.mode-card .resources{font-size:10px;color:var(--textDim);margin-top:10px;padding-top:10px;border-top:1px solid var(--border);position:relative}
+.mode-card .resources span{display:inline-block;margin:2px 4px;padding:2px 6px;border-radius:3px;background:var(--surface2)}
+
+/* Status badge */
+.mode-card .status-badge{display:none;position:absolute;top:12px;right:12px;font-size:9px;padding:3px 8px;border-radius:10px;font-weight:600}
+.mode-card .status-badge.running{display:block;background:rgba(34,197,94,.15);color:var(--success)}
+.mode-card .status-badge.loading{display:block;background:rgba(245,158,11,.15);color:var(--warn)}
+
+/* Start button */
+.start-btn{display:inline-flex;align-items:center;gap:6px;margin-top:14px;padding:8px 20px;border:none;border-radius:8px;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:all .2s;position:relative}
+.mode-card.teacher .start-btn{background:var(--teacher);color:#fff}
+.mode-card.teacher .start-btn:hover{background:var(--accent2)}
+.mode-card.conv .start-btn{background:var(--conv);color:#fff}
+.mode-card.conv .start-btn:hover{background:#059669}
+.mode-card.translator .start-btn{background:var(--translator);color:#fff}
+.mode-card.translator .start-btn:hover{background:#7c3aed}
+.start-btn:disabled{opacity:.4;cursor:not-allowed}
+
+/* Status footer */
+.status-bar{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 20px;display:flex;align-items:center;justify-content:space-between}
+.status-bar .left{display:flex;align-items:center;gap:10px;font-size:12px}
+.status-bar .left .dot{width:8px;height:8px;border-radius:50%;background:var(--border)}
+.status-bar .left .dot.idle{background:var(--textDim)}
+.status-bar .left .dot.busy{background:var(--warn);animation:pulse 1.5s infinite}
+.status-bar .left .dot.active{background:var(--success)}
+.status-bar .right{font-size:10px;color:var(--textDim)}
+.status-bar .stop-btn{padding:6px 14px;border:1px solid var(--error);border-radius:6px;background:transparent;color:var(--error);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;transition:all .2s;display:none}
+.status-bar .stop-btn:hover{background:rgba(239,68,68,.1)}
+.status-bar .stop-btn.show{display:inline-flex}
+
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* Loading overlay */
+.loading-overlay{display:none;position:fixed;inset:0;background:rgba(8,12,24,.8);backdrop-filter:blur(4px);z-index:100;align-items:center;justify-content:center}
+.loading-overlay.show{display:flex}
+.loading-box{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:32px;text-align:center;max-width:360px}
+.loading-box .spinner{width:40px;height:40px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 14px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-box h3{font-size:16px;margin-bottom:6px}
+.loading-box p{font-size:12px;color:var(--textDim);line-height:1.5}
+.loading-box .progress{height:4px;background:var(--border);border-radius:2px;margin-top:16px;overflow:hidden}
+.loading-box .progress .bar{height:100%;width:0%;background:linear-gradient(90deg,var(--accent),var(--translator));border-radius:2px;transition:width 2s}
+
+/* Responsive */
+@media(max-width:720px){.modes{grid-template-columns:1fr}}
+
+/* Keyboard shortcut hint */
+.shortcuts{font-size:10px;color:var(--textDim);text-align:center;margin-top:16px}
+.shortcuts kbd{background:var(--surface2);border:1px solid var(--border);padding:1px 4px;border-radius:3px;font-family:inherit;font-size:9px}
+</style>
+</head>
+<body>
+
+<div class="container">
+  <div class="header">
+    <div class="logo">⚡ Alex Voice</div>
+    <div class="sub">Inteligencia local · Privacidad total</div>
+    <div class="desc">Selecciona un modo. Todos los modelos corren en tu máquina — sin internet, sin nube.</div>
+  </div>
+
+  <div class="modes">
+    <!-- Teacher -->
+    <div class="mode-card teacher" onclick="startMode('teacher')">
+      <div class="status-badge" id="badgeTeacher">▶ Activo</div>
+      <div class="icon">🎓</div>
+      <h3>Teacher</h3>
+      <p>Aprende idiomas con explicaciones, pronunciación y ejercicios interactivos</p>
+      <div class="resources"><span>⚡ LLM GPU</span><span>🎙 Kokoro TTS</span><span>🌐 Multi-output</span></div>
+      <button class="start-btn" id="btnTeacher">🚀 Iniciar</button>
+    </div>
+
+    <!-- Conversation -->
+    <div class="mode-card conv" onclick="startMode('conv')">
+      <div class="status-badge" id="badgeConv">▶ Activo</div>
+      <div class="icon">💬</div>
+      <h3>Conversación</h3>
+      <p>Charla natural con memoria contextual. Detecta y responde en tu idioma</p>
+      <div class="resources"><span>⚡ LLM GPU</span><span>🎙 Kokoro TTS</span><span>💾 Memoria</span></div>
+      <button class="start-btn" id="btnConv">🚀 Iniciar</button>
+    </div>
+
+    <!-- Translator -->
+    <div class="mode-card translator" onclick="startMode('translator')">
+      <div class="status-badge" id="badgeTranslator">▶ Activo</div>
+      <div class="icon">🌍</div>
+      <h3>Traductor</h3>
+      <p>Traducción offline + TTS de alta calidad con control de voz (calma, velocidad, calidez)</p>
+      <div class="resources"><span>📝 argos-translate</span><span>🎵 Qwen3-TTS GPU</span><span>🎤 ASR</span></div>
+      <button class="start-btn" id="btnTranslator">🚀 Iniciar</button>
+    </div>
+  </div>
+
+  <!-- Status bar -->
+  <div class="status-bar">
+    <div class="left">
+      <span class="dot idle" id="statusDot"></span>
+      <span id="statusText">⚡ Selecciona un modo para comenzar</span>
+    </div>
+    <div class="right">
+      <button class="stop-btn" id="stopBtn" onclick="stopMode()">⏹ Detener</button>
+      <span id="vramInfo"></span>
+    </div>
+  </div>
+
+  <div class="shortcuts">
+    <kbd>1</kbd> Teacher · <kbd>2</kbd> Conversación · <kbd>3</kbd> Traductor · <kbd>Esc</kbd> Detener
+  </div>
+</div>
+
+<!-- Loading overlay -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="loading-box">
+    <div class="spinner"></div>
+    <h3 id="loadTitle">Iniciando...</h3>
+    <p id="loadDesc">Cargando modelos en GPU. Esto puede tomar hasta 2 minutos la primera vez.</p>
+    <div class="progress"><div class="bar" id="progressBar"></div></div>
+  </div>
+</div>
+
+<script>
+const API = 'http://localhost:5000';
+let pollTimer = null;
+let stopRequested = false;
+
+// ── Status polling ──
+async function pollStatus() {
+  try {
+    const r = await fetch(API + '/api/status');
+    const s = await r.json();
+    
+    const dot = document.getElementById('statusDot');
+    const text = document.getElementById('statusText');
+    const stopBtn = document.getElementById('stopBtn');
+    
+    if (s.mode) {
+      dot.className = 'dot active';
+      text.textContent = '✅ ' + modeLabel(s.mode) + ' — Activo';
+      stopBtn.classList.add('show');
+      // Update card badges
+      updateCards(s.mode);
+    } else {
+      dot.className = 'dot idle';
+      text.textContent = '⚡ Selecciona un modo para comenzar';
+      stopBtn.classList.remove('show');
+      resetCards();
+    }
+  } catch (e) {
+    document.getElementById('statusDot').className = 'dot idle';
+    document.getElementById('statusText').textContent = '❌ Menú no disponible';
+  }
+}
+
+function modeLabel(m) {
+  return {'teacher':'🎓 Teacher','conv':'💬 Conversación','translator':'🌍 Traductor','all':'⚡ Todos'}[m] || m;
+}
+
+function updateCards(mode) {
+  document.querySelectorAll('.mode-card').forEach(c => c.style.opacity = '0.5');
+  resetBadges();
+  if (mode === 'teacher' || mode === 'all') {
+    document.querySelector('.mode-card.teacher').style.opacity = '1';
+    document.getElementById('badgeTeacher').className = 'status-badge running';
+  }
+  if (mode === 'conv' || mode === 'all') {
+    document.querySelector('.mode-card.conv').style.opacity = '1';
+    document.getElementById('badgeConv').className = 'status-badge running';
+  }
+  if (mode === 'translator' || mode === 'all') {
+    document.querySelector('.mode-card.translator').style.opacity = '1';
+    document.getElementById('badgeTranslator').className = 'status-badge running';
+  }
+}
+
+function resetBadges() {
+  ['Teacher','Conv','Translator'].forEach(id => {
+    document.getElementById('badge' + id).className = 'status-badge';
+  });
+}
+
+function resetCards() {
+  document.querySelectorAll('.mode-card').forEach(c => c.style.opacity = '1');
+  resetBadges();
+  ['btnTeacher','btnConv','btnTranslator'].forEach(id => {
+    document.getElementById(id).disabled = false;
+    document.getElementById(id).textContent = '🚀 Iniciar';
+  });
+}
+
+// ── Start / Stop ──
+async function startMode(mode) {
+  if (stopRequested) return;
+  
+  const btn = document.getElementById('btn' + mode.charAt(0).toUpperCase() + mode.slice(1));
+  btn.disabled = true;
+  btn.textContent = '⏳ Iniciando...';
+  
+  showLoading(mode);
+  
+  try {
+    const r = await fetch(API + '/api/start/' + mode, { method: 'POST' });
+    const data = await r.json();
+    
+    if (data.error) {
+      hideLoading();
+      btn.disabled = false;
+      btn.textContent = '🚀 Iniciar';
+      document.getElementById('statusText').textContent = '❌ ' + data.error;
+      return;
+    }
+    
+    // Open the mode's URL
+    if (data.url) {
+      window.open(data.url, '_blank');
+    }
+    
+    // Start polling
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(pollStatus, 3000);
+    
+    hideLoading();
+    pollStatus();
+    
+  } catch (e) {
+    hideLoading();
+    btn.disabled = false;
+    btn.textContent = '🚀 Iniciar';
+    document.getElementById('statusText').textContent = '❌ Error de conexión';
+  }
+}
+
+async function stopMode() {
+  stopRequested = true;
+  document.getElementById('statusText').textContent = '⏹ Deteniendo servidores...';
+  
+  try {
+    await fetch(API + '/api/stop', { method: 'POST' });
+  } catch (e) {}
+  
+  setTimeout(() => {
+    stopRequested = false;
+    if (pollTimer) clearInterval(pollTimer);
+    pollStatus();
+    pollTimer = setInterval(pollStatus, 3000);
+  }, 2000);
+}
+
+function showLoading(mode) {
+  const overlay = document.getElementById('loadingOverlay');
+  overlay.classList.add('show');
+  
+  const labels = {
+    'teacher': {title: '🎓 Iniciando Teacher', desc: 'Cargando LLM en GPU + Kokoro TTS...'},
+    'conv': {title: '💬 Iniciando Conversación', desc: 'Cargando LLM en GPU + Kokoro TTS...'},
+    'translator': {title: '🌍 Iniciando Traductor', desc: 'Cargando Qwen3-TTS en GPU + argos-translate...'},
+  };
+  
+  document.getElementById('loadTitle').textContent = labels[mode]?.title || 'Iniciando...';
+  document.getElementById('loadDesc').textContent = labels[mode]?.desc || 'Cargando...';
+  
+  // Animate progress bar
+  const bar = document.getElementById('progressBar');
+  bar.style.width = '0%';
+  setTimeout(() => bar.style.width = '70%', 500);
+  setTimeout(() => bar.style.width = '85%', 10000);
+  setTimeout(() => bar.style.width = '95%', 30000);
+}
+
+function hideLoading() {
+  document.getElementById('loadingOverlay').classList.remove('show');
+  document.getElementById('progressBar').style.width = '100%';
+}
+
+// ── Keyboard shortcuts ──
+document.addEventListener('keydown', function(e) {
+  if (e.key === '1') startMode('teacher');
+  else if (e.key === '2') startMode('conv');
+  else if (e.key === '3') startMode('translator');
+  else if (e.key === 'Escape') stopMode();
+});
+
+// ── Init ──
+pollTimer = setInterval(pollStatus, 3000);
+pollStatus();
+</script>
+</body>
+</html>
