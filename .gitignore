@@ -12,6 +12,25 @@ __pycache__/
 # Temp files
 *.tmp
 *.log
+tmp/
+output.log
+nul
+
+# Downloaded archives and local runtime binaries
+*.zip
+llama-server-bin/
+llama-server-tmp/
+llama.cpp/
+
+# Large local model downloads
+models/*.gguf
+models/*.bin
+
+# Piper runtime data extracted by setup/manual downloads
+bin/piper/*.dll
+bin/piper/*.ort
+bin/piper/*phonemize*
+bin/piper/espeak-ng-data/
 
 # OS files
 Thumbs.db

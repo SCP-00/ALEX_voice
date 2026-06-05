@@ -19,7 +19,7 @@ import torch
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 PROJECT_ROOT = Path(__file__).parent.resolve()
-FRONTEND_DIR = PROJECT_ROOT / "frontend" / "translator"
+FRONTEND_DIR = PROJECT_ROOT / "frontend"
 PORT = int(os.environ.get("TRANSLATOR_PORT", "3003"))
 
 # ── ARGOS TRANSLATE (CPU, lightweight) ──
@@ -387,7 +387,7 @@ class TranslatorHandler(SimpleHTTPRequestHandler):
                 "languages": list(LANG_MAP.keys()),
             })
         elif self.path in ("/", "/index.html"):
-            self.path = "/index.html"
+            self.path = "/translator.html"
             super().do_GET()
         else:
             super().do_GET()
@@ -586,9 +586,6 @@ def main():
     
     # Pre-load Qwen3 (will be slow but first request will be fast)
     print(f"[Translator] Qwen3-TTS se cargara bajo demanda")
-    
-    # Create frontend dir
-    FRONTEND_DIR.mkdir(parents=True, exist_ok=True)
     
     httpd = HTTPServer(("0.0.0.0", PORT), TranslatorHandler)
     print(f"[Translator] Servidor listo en http://localhost:{PORT}")

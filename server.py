@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Alex Voice — Plan B: LLM en GPU, TTS en CPU
-Servidor independiente. Cada plan es autónomo.
-Corre en puerto 3001 para no interferir con Plan A (3000).
+Alex Voice — Teacher + Conversation.
+LLM en GPU, TTS híbrido Kokoro/Piper en CPU.
+Corre en puerto 3000 por defecto.
 """
 
 import json
@@ -18,13 +18,10 @@ import urllib.error
 import numpy as np
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import urlparse
 from collections import OrderedDict
 
-# ── Shared translator module ──────────────────────────────
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from shared.translator import parse_multi_output, get_tts_text, get_system_prompt, build_llm_messages, detect_language_simple
+# ── Shared prompts module ─────────────────────────────────
+from prompts import parse_multi_output, get_tts_text, get_system_prompt, build_llm_messages, detect_language_simple
 
 # ── LRU Cache ──────────────────────────────────────────────
 class ResponseCache:
@@ -83,8 +80,8 @@ class ResponseCache:
 # ── Config ─────────────────────────────────────────────────
 LLAMA_HOST = os.environ.get("LLAMA_HOST", "http://localhost:8081")
 PORT = int(os.environ.get("PLAN_B_PORT", "3000"))
-FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
-PROJECT_ROOT = Path(__file__).parent.parent
+FRONTEND_DIR = Path(__file__).parent / "frontend"
+PROJECT_ROOT = Path(__file__).parent
 
 def _safe_print(msg):
     try:
@@ -535,7 +532,7 @@ class Handler(SimpleHTTPRequestHandler):
             _response_cache.invalidate()
             self._json_response({"ok": True})
         elif self.path in ("/", "/index.html"):
-            self._serve_file("plan-b/index.html")
+            self._serve_file("index.html")
         else:
             super().do_GET()
 
@@ -551,10 +548,6 @@ class Handler(SimpleHTTPRequestHandler):
         body = self.rfile.read(length) if length > 0 else b"{}"
         if self.path == "/api/chat":
             self._handle_chat(body)
-        elif self.path == "/api/translate":
-            self._handle_translate(body)
-        elif self.path == "/api/parse":
-            self._handle_parse(body)
         elif self.path == "/api/tts":
             self._handle_tts(body)
         elif self.path == "/api/tts/stream":
@@ -568,7 +561,7 @@ class Handler(SimpleHTTPRequestHandler):
     def _handle_chat(self, body):
         """Proxy a llama-server con caché LRU y multi-output parsing.
         
-        Ahora acepta un campo 'mode' (teacher/conversation/translator) para usar
+        Acepta un campo 'mode' (teacher/conversation) para usar
         system prompts optimizados con formato multi-output (【TEXT】/【PRONUNCIATION】/【TRANSLATION】).
         """
         try:
@@ -594,7 +587,23 @@ class Handler(SimpleHTTPRequestHandler):
                     "stream": data.get("stream", False),
                 }
             elif "messages" in data:
-                chat_data = data
+                messages = list(data.get("messages") or [])
+                has_system = bool(messages and messages[0].get("role") == "system")
+                if not has_system:
+                    messages.insert(0, {"role": "system", "content": get_system_prompt(mode)})
+                if target_lang:
+                    for msg in reversed(messages):
+                        if msg.get("role") == "user":
+                            msg["content"] = f"{msg.get('content', '')}\n[Target language: {target_lang}]"
+                            break
+                chat_data = {
+                    "messages": messages,
+                    "n_predict": data.get("n_predict", 512),
+                    "temperature": data.get("temperature", {
+                        'teacher': 0.5, 'conversation': 0.7
+                    }.get(mode, 0.7)),
+                    "stream": data.get("stream", False),
+                }
             else:
                 # Build messages with proper system prompt from translator module
                 user_text = data.get('text', '')
@@ -609,7 +618,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "messages": messages,
                     "n_predict": data.get("n_predict", 1024),
                     "temperature": data.get("temperature", {
-                        'teacher': 0.5, 'translator': 0.3, 'conversation': 0.7
+                        'teacher': 0.5, 'conversation': 0.7
                     }.get(mode, 0.7)),
                     "stream": data.get("stream", False),
                 }
@@ -680,8 +689,8 @@ class Handler(SimpleHTTPRequestHandler):
                 cleaned = re.sub(r'<think>[\s\S]*?</think>\s*', '', content).strip()
                 if not cleaned:
                     cleaned = content
-                # Parse multi-output for teacher/translator
-                parsed = parse_multi_output(cleaned) if mode in ('teacher', 'translator') else {}
+                # Parse multi-output for teacher mode
+                parsed = parse_multi_output(cleaned) if mode == 'teacher' else {}
                 if choices:
                     choices[0]["message"]["content"] = cleaned
                 # Add parsed output to result
@@ -716,8 +725,8 @@ class Handler(SimpleHTTPRequestHandler):
             lang = data.get("lang", "auto")
             mode = data.get("mode", "conversation")
             
-            # If mode is teacher or translator, extract only the TTS-relevant text
-            if mode in ('teacher', 'translator'):
+            # If mode is teacher, extract only the TTS-relevant text
+            if mode == 'teacher':
                 text = get_tts_text(text, mode)
             if not text:
                 self._json_response({"error": "texto vacio"})
@@ -956,7 +965,7 @@ def main():
     httpd = HTTPServer(("0.0.0.0", PORT), Handler)
 
     _safe_print(f"\n{'='*50}")
-    _safe_print(f"  >> Alex Voice — Plan B (GPU+CPU)")
+    _safe_print(f"  >> Alex Voice — Teacher + Conversation (GPU+CPU)")
     _safe_print(f"{'='*50}")
     _safe_print(f"  Web UI:       http://localhost:{PORT}")
     _safe_print(f"  Stats API:    http://localhost:{PORT}/api/stats")

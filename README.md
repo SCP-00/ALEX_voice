@@ -10,13 +10,25 @@ Creado por [SCP-076](https://github.com/SCP-00) · Coded with ❤️ by [Buffy](
 
 ---
 
+## Estado Actual (auditoria 2026-06-05)
+
+Se audito el proyecto local y se corrigieron problemas de arranque del host `3000`, ASR del traductor y setup. Ver el detalle en [AUDIT.md](AUDIT.md).
+
+Puntos clave:
+- `localhost:3000` = Teacher + Conversation con LLM local via `launcher.py`.
+- `localhost:3003` = Traductor independiente con argos + Qwen3-TTS.
+- `setup.bat` ahora instala/verifica de forma idempotente y deja `llama-server`/modelo en rutas que `launcher.py` usa.
+- Para mejor ASR en espanol, selecciona `Desde: Espanol` antes de grabar.
+
+---
+
 ## 🚀 Inicio Rápido
 
 ### Opción 1: Script automático (recomendado)
 
 ```bash
 # 1. Descarga el ZIP desde GitHub
-# 2. Ejecuta setup.bat (descarga e instala todo automáticamente)
+# 2. Ejecuta setup.bat (verifica lo instalado y descarga lo faltante)
 # 3. Ejecuta run.bat y selecciona el modo deseado
 ```
 
@@ -220,8 +232,9 @@ Alex_Voice/
 ├── translator_server.py       ← Servidor traductor (puerto 3003)
 ├── launcher.py                ← Lanzador unificado (inicia todo)
 │
-├── setup.bat                  ← Instalación automática
+├── setup.bat                  ← Instalación/verificación idempotente
 ├── run.bat                    ← Inicio rápido (menú interactivo)
+├── AUDIT.md                   ← Auditoria, cambios y pendientes
 │
 ├── CREDITS.md                 ← Créditos del proyecto
 ├── LICENSE                    ← Licencia MIT

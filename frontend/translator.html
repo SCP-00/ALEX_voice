@@ -440,10 +440,11 @@ async function toggleMic() {
       const base64 = await blobToBase64(wavBlob);
       
       try {
+        const asrLang = document.getElementById('fromLang').value;
         const r = await fetch(API + '/api/asr', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ audio: base64, lang: 'auto' }),
+          body: JSON.stringify({ audio: base64, lang: asrLang }),
         });
         const data = await r.json();
         
@@ -495,12 +496,7 @@ async function convertToWav(webmBlob) {
   const pcm = buf.getChannelData(0);
   const sr = buf.sampleRate;
   const targetSr = 16000;
-  const ratio = sr / targetSr;
-  const newLen = Math.floor(pcm.length / ratio);
-  const resampled = new Float32Array(newLen);
-  for (let i = 0; i < newLen; i++) {
-    resampled[i] = pcm[Math.floor(i * ratio)];
-  }
+  const resampled = downsampleBuffer(pcm, sr, targetSr);
   const int16 = new Int16Array(resampled.length);
   for (let i = 0; i < resampled.length; i++) {
     const s = Math.max(-1, Math.min(1, resampled[i]));
@@ -530,6 +526,26 @@ async function convertToWav(webmBlob) {
     view.setInt16(44 + i * 2, int16[i], true);
   }
   return new Blob([buffer], { type: 'audio/wav' });
+}
+
+function downsampleBuffer(buffer, sampleRate, targetRate) {
+  if (targetRate === sampleRate) return buffer;
+  const ratio = sampleRate / targetRate;
+  const newLength = Math.round(buffer.length / ratio);
+  const result = new Float32Array(newLength);
+  let offsetBuffer = 0;
+  for (let offsetResult = 0; offsetResult < result.length; offsetResult++) {
+    const nextOffsetBuffer = Math.min(buffer.length, Math.round((offsetResult + 1) * ratio));
+    let accum = 0;
+    let count = 0;
+    for (let i = offsetBuffer; i < nextOffsetBuffer; i++) {
+      accum += buffer[i];
+      count++;
+    }
+    result[offsetResult] = count ? accum / count : 0;
+    offsetBuffer = nextOffsetBuffer;
+  }
+  return result;
 }
 
 function blobToBase64(blob) {
@@ -625,7 +641,7 @@ async function toggleConvMic(person) {
       const asrR = await fetch(API + '/api/asr', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ audio: base64, lang: 'auto' }),
+        body: JSON.stringify({ audio: base64, lang: fromLang }),
       });
       const asrData = await asrR.json();
       

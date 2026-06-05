@@ -18,7 +18,7 @@ from datetime import datetime
 
 # ── Config ──────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).parent.resolve()
-LLAMA_DIR = Path(r"C:\Users\andyh\Documents\llama-b9479-bin-win-cuda-13.3-x64")
+DOCUMENTS_LLAMA_DIR = Path.home() / "Documents" / "llama-b9479-bin-win-cuda-13.3-x64"
 MODEL_DIR_Q8 = Path(r"C:\Users\andyh\.lmstudio\models\khazarai\Qwen3.5-2B-Qwen3.6-plus-Distilled-GGUF")
 MODEL_DIR_Q4 = Path(r"C:\Users\andyh\.lmstudio\models\Qwen\Qwen2.5-1.5B-Instruct-GGUF")
 PYTHON_EXE = Path(r"C:\Users\andyh\AppData\Local\Programs\Python\Python310\python.exe")
@@ -42,24 +42,65 @@ def now_str():
 def log(msg):
     eprint(f"[{now_str()}] {msg}")
 
-def find_model():
-    """Elige el mejor modelo disponible. Prioridad: Q4_K_M > Q8."""
+def find_model(force_q8=False):
+    """Elige el mejor modelo disponible. Prioridad: setup local > LM Studio."""
+    env_model = os.environ.get("ALEX_MODEL")
+    if env_model:
+        p = Path(env_model)
+        if p.exists():
+            return p, f"Modelo env ({p.name})", 8192
+
+    local_models = [
+        (PROJECT_ROOT / "models" / "qwen2.5-1.5b-q4_k_m.gguf", "Qwen2.5-1.5B-Q4_K_M", 8192),
+        (PROJECT_ROOT / "models" / "qwen2.5-1.5b-instruct-q4_k_m.gguf", "Qwen2.5-1.5B-Q4_K_M", 8192),
+    ]
     q4_path = MODEL_DIR_Q4 / "qwen2.5-1.5b-instruct-q4_k_m.gguf"
     q8_path = MODEL_DIR_Q8 / "Qwen3.5-2B-Qwen3.6-plus-Distilled-q8_0.gguf"
 
-    # Buscar recursivamente archivos .gguf en los directorios
+    for path, label, ctx in local_models:
+        if path.exists() and not force_q8:
+            return path, label, ctx
+
+    local_alternatives = list((PROJECT_ROOT / "models").glob("*.gguf")) if (PROJECT_ROOT / "models").exists() else []
     q4_alternatives = list(MODEL_DIR_Q4.glob("*.gguf")) if MODEL_DIR_Q4.exists() else []
     q8_alternatives = list(MODEL_DIR_Q8.glob("*.gguf")) if MODEL_DIR_Q8.exists() else []
 
-    if q4_path.exists():
+    if force_q8 and q8_path.exists():
+        return q8_path, "Qwen3.5-2B-Q8", 4096
+    if force_q8 and q8_alternatives:
+        return q8_alternatives[0], f"Qwen3.5 (Q8, {q8_alternatives[0].name})", 4096
+    if q4_path.exists() and not force_q8:
         return q4_path, "Qwen2.5-1.5B-Q4_K_M", 8192
-    if q4_alternatives:
+    if q4_alternatives and not force_q8:
         return q4_alternatives[0], f"Qwen2.5 (Q4, {q4_alternatives[0].name})", 8192
+    if local_alternatives and not force_q8:
+        return local_alternatives[0], f"Modelo local ({local_alternatives[0].name})", 8192
     if q8_path.exists():
         return q8_path, "Qwen3.5-2B-Q8", 4096
     if q8_alternatives:
         return q8_alternatives[0], f"Qwen3.5 (Q8, {q8_alternatives[0].name})", 4096
     return None, None, 0
+
+def find_llama_exe():
+    """Busca llama-server donde lo deja setup.bat y en rutas legacy."""
+    env_exe = os.environ.get("LLAMA_EXE")
+    if env_exe and Path(env_exe).exists():
+        return Path(env_exe)
+
+    env_dir = os.environ.get("LLAMA_DIR")
+    candidates = []
+    if env_dir:
+        candidates.append(Path(env_dir) / "llama-server.exe")
+    candidates.extend([
+        PROJECT_ROOT / "llama-server-bin" / "llama-server.exe",
+        PROJECT_ROOT / "llama.cpp" / "llama-server.exe",
+        DOCUMENTS_LLAMA_DIR / "llama-server.exe",
+    ])
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
 
 def check_slots(host, port, timeout=2):
     """Verifica si llama-server responde. Retorna (True, n_slots) o (False, 0)."""
@@ -72,7 +113,7 @@ def check_slots(host, port, timeout=2):
     except Exception:
         return False, 0
 
-def start_process(args, name="proceso", hidden=True):
+def start_process(args, name="proceso", hidden=True, env=None):
     """Inicia un proceso de forma confiable en Windows.
     Retorna el objeto Popen o None si falla."""
     creation_flags = 0
@@ -86,6 +127,7 @@ def start_process(args, name="proceso", hidden=True):
             creationflags=creation_flags,
             stdout=subprocess.DEVNULL if hidden else None,
             stderr=subprocess.DEVNULL if hidden else None,
+            env=env,
         )
         log(f"  ✅ {name} iniciado (PID {proc.pid})")
         _processes.append(proc)
@@ -98,6 +140,7 @@ def start_process(args, name="proceso", hidden=True):
                 args,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env=env,
             )
             log(f"  ✅ {name} iniciado (PID {proc.pid}, visible)")
             _processes.append(proc)
@@ -172,31 +215,29 @@ def start_llama_server(model_path, ctx_size):
         log(f"  ✅ Ya está corriendo ({n} slots)")
         return True
 
-    llama_exe = LLAMA_DIR / "llama-server.exe"
-    if not llama_exe.exists():
-        log(f"  ❌ llama-server.exe no encontrado en {llama_exe}")
+    llama_exe = find_llama_exe()
+    if llama_exe is None:
+        log("  ❌ llama-server.exe no encontrado.")
+        log(f"     Revisa: {PROJECT_ROOT / 'llama-server-bin'}")
+        log("     O configura LLAMA_EXE / LLAMA_DIR.")
         return False
     if not model_path.exists():
         log(f"  ❌ Modelo no encontrado: {model_path}")
-        return False        # Flags optimizados para velocidad (benchmarks TTFT aplicados):
-        # - `--no-warmup` evita pre-calculo (reduce inicio ~50%)
-        # - `--reasoning-format none` desactiva parsing (Qwen2.5 no razona)
-        # - `-ngl 99` todas las capas en GPU (~24 capas, no hay diferencia vs ngl 25)
-        # - `--no-ui` no inicia interfaz web (usamos frontend propio)
-        # - NOTA: prompt caching activo por defecto -> 2do request TTFT ~0.4s
-        # - NOTA: flash-attn, cache q8_0, ubatch NO mejoran TTFT en este modelo
-        args = [
-            str(llama_exe),
-            "-m", str(model_path),
-            "--host", "0.0.0.0",
-            "--port", str(LLAMA_PORT),
-            "-ngl", "99",
-            "-c", str(ctx_size),
-            "--chat-template", "chatml",
-            "--no-warmup",
-            "--reasoning-format", "none",
-            "--no-ui",
-        ]
+        return False
+
+    # Flags optimizados para velocidad (benchmarks TTFT aplicados).
+    args = [
+        str(llama_exe),
+        "-m", str(model_path),
+        "--host", "0.0.0.0",
+        "--port", str(LLAMA_PORT),
+        "-ngl", "99",
+        "-c", str(ctx_size),
+        "--chat-template", "chatml",
+        "--no-warmup",
+        "--reasoning-format", "none",
+        "--no-ui",
+    ]
     log(f"  🚀 Iniciando llama-server...")
     log(f"     Modelo: {model_path.name}")
     log(f"     Contexto: {ctx_size} tokens")
@@ -222,16 +263,14 @@ def start_plan_server(plan_name, port, server_script):
     log(f"  🚀 Iniciando {plan_name} (puerto {port})...")
     env = os.environ.copy()
     # Pasar puerto como variable de entorno (lo usan los servers)
-    port_vars =    {
-        "B": "PLAN_B_PORT",
-    }
-    if plan_name in port_vars:
-        env[port_vars[plan_name]] = str(port)
+    if server_script.replace("\\", "/").endswith("server.py"):
+        env["PLAN_B_PORT"] = str(port)
 
     proc = start_process(
         [str(PYTHON_EXE), str(server_path)],
         f"{plan_name} (:{port})",
         hidden=True,
+        env=env,
     )
     return proc is not None
 
@@ -269,7 +308,7 @@ PLANS = {
     "B": {
         "name": "Alex Voice",
         "port": 3000,
-        "server": "B/server.py",
+        "server": "server.py",
         "info": "Kokoro-82M + Piper TTS | Traductor multi-output | Streaming",
     },
 }
@@ -279,7 +318,7 @@ def main():
     # Parsear args modo CLI
     plan_name = "B"  # default
     port = 3000
-    server_script = "B/server.py"
+    server_script = "server.py"
     plan_info = "Kokoro-82M + Piper + Traductor multi-output + Streaming"
 
     open_browser_flag = True
@@ -324,7 +363,7 @@ def main():
     eprint("=" * 55)
 
     # 1. Seleccionar modelo
-    model_path, model_label, ctx_size = find_model()
+    model_path, model_label, ctx_size = find_model(force_q8=force_q8)
     if model_path is None:
         log("  ❌ No se encontró ningún modelo GGUF.")
         log("     Descarga uno desde:")
@@ -344,7 +383,8 @@ def main():
         log("  ❌ No se pudo iniciar llama-server.")
         log("     Verifica CUDA, GPU, y drivers.")
         log("     Para iniciar manualmente:")
-        log(f'     "{LLAMA_DIR / "llama-server.exe"}" -m "{model_path}" -ngl 99 --port {LLAMA_PORT}')
+        llama_exe = find_llama_exe() or Path("llama-server.exe")
+        log(f'     "{llama_exe}" -m "{model_path}" -ngl 99 --port {LLAMA_PORT}')
         eprint()
         input("  Presiona Enter para salir...")
         cleanup()

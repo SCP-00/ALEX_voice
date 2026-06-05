@@ -36,7 +36,7 @@ echo   Audio: Qwen3-TTS-CustomVoice (GPU, ~2GB VRAM)
 echo.
 echo   Abre: http://localhost:3003
 echo.
-start "Alex Translator" python translator_server.py
+start "Alex Translator" python translator.py
 echo   ✅ Servidor iniciado en puerto 3003
 echo   Presiona Ctrl+C en la ventana para cerrar
 echo.
@@ -83,7 +83,7 @@ echo   Traductor:            puerto 3003
 echo.
 start "Alex Voice" python launcher.py --no-browser
 timeout /t 5 /nobreak >nul
-start "Alex Translator" python translator_server.py
+start "Alex Translator" python translator.py
 timeout /t 5 /nobreak >nul
 start http://localhost:3000
 start http://localhost:3003
