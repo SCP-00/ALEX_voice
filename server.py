@@ -85,7 +85,16 @@ class ResponseCache:
 
 # ── Config ─────────────────────────────────────────────────
 LLAMA_HOST = os.environ.get("LLAMA_HOST", "http://localhost:8081")
+
+# Soporte para --mode y --port desde línea de comandos (conv_server.py wrapper)
+SERVER_MODE = os.environ.get("CONV_MODE", "")
 PORT = int(os.environ.get("PLAN_B_PORT", "3000"))
+for i, arg in enumerate(sys.argv):
+    if arg == "--port" and i + 1 < len(sys.argv):
+        PORT = int(sys.argv[i + 1])
+    elif arg == "--mode" and i + 1 < len(sys.argv):
+        SERVER_MODE = sys.argv[i + 1]
+
 FRONTEND_DIR = Path(__file__).parent / "frontend"
 PROJECT_ROOT = Path(__file__).parent
 
@@ -339,7 +348,7 @@ def _get_asr_model(model_name):
             _safe_print(f"[B] [!] Error cargando {model_name}: {e}")
             return None
 
-def _asr_transcribe(audio_bytes, language="auto", model_name="base"):
+def _asr_transcribe(audio_bytes, language="auto", model_name="small"):
     model = _get_asr_model(model_name)
     if model is None:
         return None, None, f"Modelo '{model_name}' no disponible"
@@ -955,26 +964,11 @@ class Handler(SimpleHTTPRequestHandler):
         error_msg = None
         method_used = "faster-whisper"
 
-        if HAVE_FASTER_WHISPER and _get_asr_model("base") is not None:
-            initial = "small" if lang == "ja" else "base"
+        if HAVE_FASTER_WHISPER and _get_asr_model("small") is not None:
             try:
-                text_result, segments_result, error_msg = _asr_transcribe(raw_audio, lang, initial)
+                text_result, segments_result, error_msg = _asr_transcribe(raw_audio, lang)
             except Exception as e:
                 error_msg = str(e)[:200]
-
-            # Auto-detect: si base detecta JA, re-ejecutar con small
-            if text_result and lang == "auto":
-                has_ja = any('\u3040' <= c <= '\u309f' or '\u30a0' <= c <= '\u30ff' or '\u4e00' <= c <= '\u9fff' for c in text_result)
-                if has_ja and initial != "small":
-                    _safe_print(f"[B] [ASR] JA detectado → small")
-                    try:
-                        t2, s2, _ = _asr_transcribe(raw_audio, "ja", "small")
-                        if t2:
-                            text_result, segments_result = t2, s2
-                            error_msg = None
-                            method_used = "faster-whisper-auto-ja"
-                    except Exception:
-                        pass
 
         if not text_result:
             error_msg = error_msg or "ASR no disponible"
@@ -1022,21 +1016,25 @@ def main():
     _stats_collector = StatsCollector()
     httpd = HTTPServer(("0.0.0.0", PORT), Handler)
 
+    mode_name = SERVER_MODE if SERVER_MODE else "teacher"
+    mode_label = {'teacher': '🎓 Teacher', 'conversation': '💬 Conversación'}.get(mode_name, mode_name)
     _safe_print(f"\n{'='*50}")
-    _safe_print(f"  >> Alex Voice — Teacher + Conversation (GPU+CPU)")
+    _safe_print(f"  >> Alex Voice — {mode_label} (GPU+CPU)")
     _safe_print(f"{'='*50}")
+    _safe_print(f"  Mode:         {mode_label}")
     _safe_print(f"  Web UI:       http://localhost:{PORT}")
     _safe_print(f"  Stats API:    http://localhost:{PORT}/api/stats")
     _safe_print(f"  llama-server: {LLAMA_HOST}")
     _safe_print(f"  Cache:        LRU {_response_cache._maxsize} entradas")
     tts_str = "Kokoro-82M (principal) + Piper (fallback)" if HAVE_KOKORO else "Piper Python API (~45ms)"
     _safe_print(f"  TTS:          {tts_str}")
-    _safe_print(f"  ASR:          faster-whisper (base + small auto-switch)")
+    _safe_print(f"  ASR:          faster-whisper small (GPU, ~1.5 GB VRAM)")
     _safe_print(f"{'='*50}\n")
 
-    # Cargar ASR base al inicio
+    # Cargar ASR small al inicio (~1.5 GB VRAM en GPU)
     if HAVE_FASTER_WHISPER:
-        _get_asr_model("base")
+        _safe_print(f"[B] [ASR] Cargando faster-whisper small...")
+        _get_asr_model("small")
 
     # Cargar Piper TTS
     global _piper_tts

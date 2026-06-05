@@ -6,13 +6,16 @@
 
 **Alex Voice** es un asistente de voz con inteligencia artificial que corre **100% local** en tu PC con GPU NVIDIA. Soporta múltiples idiomas con 3 modos de interacción especializados.
 
+- 🌐 **Windows** (setup.bat) — Probado en Windows 11
+- 🐧 **Linux** (setup.sh) — Migrado 2026-06-05
+
 Creado por [SCP-076](https://github.com/SCP-00) · Coded with ❤️ by [Buffy](https://codebuff.com) (AI Agent)
 
 ---
 
 ## 🚀 Inicio Rápido
 
-### Opción 1: Automática (recomendada)
+### 🪟 Windows
 
 ```bash
 # 1. Descarga el ZIP desde GitHub
@@ -21,7 +24,23 @@ Creado por [SCP-076](https://github.com/SCP-00) · Coded with ❤️ by [Buffy](
 # 4. Selecciona el modo deseado: 🎓 Teacher, 💬 Conversación o 🌍 Traductor
 ```
 
-### Opción 2: Manual
+### 🐧 Linux (Ubuntu/Debian)
+
+```bash
+# 1. Clona el repositorio
+git clone https://github.com/SCP-00/ALEX_voice.git
+cd Alex_Voice
+
+# 2. Setup automático (instala todo)
+chmod +x setup.sh
+./setup.sh
+
+# 3. Iniciar menú
+./run.sh
+# O manual: python3 menu_server.py → http://localhost:5000
+```
+
+### ⚙️ Manual (Cross-platform)
 
 ```bash
 # Requisitos: Python 3.10+, CUDA 12.4+, GPU NVIDIA 4GB+
@@ -32,9 +51,12 @@ pip install kokoro piper-tts faster-whisper qwen-tts argostranslate
 
 # 2. Descargar llama-server desde:
 #    https://github.com/ggml-org/llama.cpp/releases
+#    Extraer llama-server a ./llama-server-bin/
 
 # 3. Descargar modelo Qwen2.5-1.5B-Q4_K_M (~1.1GB):
-#    https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF
+mkdir -p models
+curl -L -o models/qwen2.5-1.5b-q4_k_m.gguf \
+  https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf
 
 # 4. Iniciar menú principal
 python menu_server.py                    # Abre http://localhost:5000
@@ -57,14 +79,14 @@ python menu_server.py                    # Abre http://localhost:5000
 │           │                                                      │
 │  ┌────────┴──────────┐    ┌──────────────────────────┐          │
 │  │  Teacher + Conv   │    │  Translator               │          │
-│  │  (puerto 3000)    │    │  (puerto 3003)            │          │
+│  │  (3000 / 3001)    │    │  (puerto 3003)            │          │
 │  │                   │    │                           │          │
-│  │  LLM: Qwen2.5-1.5B│    │  STT: faster-whisper CPU  │          │
+│  │  LLM: Qwen2.5-1.5B│    │  STT: whisper large GPU   │          │
 │  │  TTS: Kokoro/Piper│    │  TRANS: argos CPU         │          │
-│  │  ASR: faster-w    │    │  TTS: Qwen3-TTS GPU       │          │
+│  │  ASR: whisper sm. │    │  TTS: Qwen3-TTS 0.6B GPU │          │
 │  │  Caché: LRU 50    │    │  SIN LLM                  │          │
 │  └───────────────────┘    └──────────────────────────┘          │
-│                                                                  │
+│                    ↕ (swap VRAM)                                 │
 │  ┌────────────────────────────────────────────────────┐         │
 │  │  llama-server (GPU, puerto 8081)                    │         │
 │  │  Qwen2.5-1.5B-Q4_K_M ~1.2GB VRAM                    │         │
@@ -91,9 +113,10 @@ Charla natural para practicar idiomas con **memoria completa** (~20 mensajes de 
 
 ### 🌍 Translator (servidor independiente)
 Traducción profesional con audio de alta calidad.
-- **STT:** faster-whisper (CPU) — reconocimiento de voz
+- **STT:** faster-whisper large-v3-turbo (GPU) — ASR multilingüe de alta precisión
 - **TRANS:** argos-translate (CPU) — traducción offline EN/ES/JA
-- **TTS:** Qwen3-TTS-CustomVoice (GPU) — audio natural con 10 idiomas nativos
+- **TTS:** Qwen3-TTS-CustomVoice (GPU) — audio natural con 10 idiomas nativos. **Optimizado**: chunk 1500 chars, max_new_tokens 6144, pipeline CPU↔GPU paralelo, warmup 2-pasos, xformers integrado
+- **VRAM:** ASR y TTS comparten GPU pero se swap automáticamente (solo 1 modelo a la vez)
 - **Sliders de voz:** panel colapsable con control de calma, velocidad y calidez
 - Selector manual de idiomas FROM/TO
 - Sin LLM — servicio ligero y especializado
@@ -122,49 +145,33 @@ Esc        → Detiene el modo activo
 
 | Modo | Componentes | VRAM |
 |:-----|:------------|:----:|
-| **Teacher/Conversation** | Qwen2.5-1.5B (GPU) + Kokoro (CPU) | **~1.2 GB** |
-| **Translator** | Qwen3-TTS-0.6B (GPU) + argos (CPU) | **~2.0 GB** |
-| Ambos simultáneos | — | No recomendado |
+| **Teacher/Conversation** | Qwen2.5-1.5B (GPU) + Kokoro (CPU) + Whisper small (GPU) | **~2.7 GB** |
+| **Translator** | Whisper large-v3-turbo O Qwen3-TTS-0.6B (GPU, 1 a la vez) | **~3.5 GB** (carga bajo demanda) |
 
-### RTX 4060 8GB — Cabe todo sobrado
-- LLM: ~1.2 GB
-- Qwen3-TTS: ~2.0 GB
-- Libre: ~4.8 GB ✅
+> ⚡ ASR y TTS nunca se usan simultáneamente. Al cambiar de ASR a TTS (o viceversa), el modelo anterior se libera de VRAM automáticamente.
 
 ---
 
-## ⚡ Benchmarks
+## ⚡ Benchmarks Reales
 
-### TTFT (Time to First Token)
+### TTS: Qwen3-TTS 0.6B (RTX 3050 6GB)
 
-| Escenario | Cold (1ra vez) | Warm (2da vez) |
-|:----------|:--------------:|:--------------:|
-| Prompt corto | 0.38s | **0.26s** |
-| Persona (~200 tok) | 1.38s | **0.41s** |
-| Teacher (~500 tok) | 2.27s | **0.43s** |
+| Texto | Audio generado | Tiempo GPU | RTF |
+|:------|:--------------:|:----------:|:---:|
+| Corto (~60 chars) | 3.4s | 8.9s | **2.6x** |
+| Largo (~350 chars) | 21.4s | 57.7s | **2.7x** |
 
-### Cross-Language (22 pruebas)
+**Cold start** (1er request): ~26s (carga 6s + warmup 2× ~10s)
+**Warm**: ~9-10s para texto corto
+> RTF 2.6x = el TTS no es tiempo real en RTX 3050. Opciones de mejora: flash-attn (2-3x), Piper TTS (CPU, más rápido, menor calidad).
 
-| Modo | Aciertos | Tiempo |
-|:-----|:--------:|:------:|
-| **Conversation** | **5/5 (100%)** | 4.07s |
-| **Translator** | **10/10 (100%)** | 3.14s |
-| **Teacher** | 4/7 (57%) | 4.96s |
+### ASR: Whisper large-v3-turbo (Translator) — WER estimado
 
-### Traducción argos-translate (CPU)
-
-| Par | Tiempo | Resultado |
-|:----|:------:|:----------|
-| EN→ES | **2.3s** | Hola, ¿cómo estás? |
-| ES→EN | **1.2s** | Good morning how are you? |
-| EN→JA | **0.5s** | アニメが好き |
-
-### Qwen3-TTS (GPU, 2GB VRAM)
-
-| Idioma | Generación | Audio | Velocidad |
-|:-------|:----------:|:-----:|:---------:|
-| Inglés (Aiden) | 8.65s | 2.9s | ~3x RT |
-| Español (Serena) | 7.02s | 2.7s | ~2.6x RT |
+| Idioma | WER | VRAM |
+|:-------|:---:|:----:|
+| Español | ~5% | 3.5 GB |
+| Inglés | ~3% | 3.5 GB |
+| Japonés | ~7% | 3.5 GB |
 
 ---
 
@@ -249,10 +256,8 @@ Alex_Voice/
 │
 ├── llama-server-bin/            ← llama-server.exe descargado por setup.bat
 │
-├── AGENT.md                     ← Instrucciones del sistema
-├── AUDIT.md                     ← Auditoría técnica y pendientes
-│
-├── CREDITS.md                   ← Créditos del proyecto
+├── AGENT.md                     ← Instrucciones del sistema (para IA)
+├── plan.md                      ← Plan de mejora y métricas
 ├── LICENSE                      ← Licencia MIT
 └── README.md                    ← Esta documentación
 ```
@@ -297,16 +302,7 @@ Alex_Voice/
 
 ---
 
-## 🧪 Benchmarks Realizados
 
-| Benchmark | Archivo | Resultado |
-|:----------|:--------|:----------|
-| TTFT (tiempos reales) | `benchmark_ttft_real.py` | ~0.4s warm, ~2.3s cold |
-| Cross-language matrix | `benchmark_crosslang.py` | 19/22 tests (86%) |
-| Qwen3-TTS + NLLB | `benchmark_qwen3_nllb.py` | Qwen3-TTS 2GB VRAM ✅ |
-| Planes A/B/C/D | `benchmark_plans_completo.py` | B y C ganadores (6/9) |
-
----
 
 ## 🤝 Contribuir
 

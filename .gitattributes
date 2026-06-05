@@ -1,0 +1,26 @@
+# Auto-detect text files and normalize to LF on commit
+* text=auto
+
+# Shell scripts must stay LF
+*.sh text eol=lf
+
+# Python files
+*.py text
+
+# Markdown/docs
+*.md text
+
+# HTML/JS/CSS
+*.html text
+*.css text
+*.js text
+
+# Windows batch files stay CRLF
+*.bat text eol=crlf
+
+# Binary files
+*.onnx binary
+*.gguf binary
+*.png binary
+*.jpg binary
+*.ico binary

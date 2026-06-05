@@ -12,6 +12,11 @@ import json, os, sys, time, base64, struct, threading, re, gc
 from pathlib import Path
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor
+
+# ── ThreadPoolExecutor global para tareas CPU pesadas en paralelo con GPU ──
+#    Permite delegar: mientras GPU genera audio, CPU convierte el chunk anterior a WAV
+_cpu_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cpu_worker")
 
 import numpy as np
 import torch
@@ -161,8 +166,10 @@ _qwen3_model = None
 _qwen3_lock = threading.Lock()
 _qwen3_warmup_done = False
 
-# Limite por chunk para TTS (caracteres)
-_MAX_TTS_CHARS = 600
+# ── Límite por chunk para TTS — aumentado a 1500 chars para reducir invocaciones ──
+#    Cada chunk = 1 llamada a generate_custom_voice() con overhead de ~2-5s.
+#    Con 1500 chars, la mayoría de las traducciones caben en 1 solo chunk.
+_MAX_TTS_CHARS = 1500
 
 
 def _chunk_text(text, max_chars=_MAX_TTS_CHARS):
@@ -203,8 +210,22 @@ try:
 except ImportError:
     pass
 
+def _unload_asr():
+    """Libera ASR (Whisper) de VRAM para dejar espacio a Qwen3-TTS."""
+    global _asr_models
+    with _asr_lock:
+        if _asr_models:
+            _asr_models.clear()
+            gc.collect()
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            print(f"[Translator] ASR liberado de VRAM")
+
 def _load_qwen3():
-    """Lazy-load Qwen3-TTS on GPU con optimizaciones."""
+    """Lazy-load Qwen3-TTS on GPU con optimizaciones.
+    
+    Libera Whisper de VRAM primero (ASR y TTS nunca se usan juntos).
+    """
     global _qwen3_model, HAVE_QWEN3_TTS, _qwen3_warmup_done
     if _qwen3_model is not None:
         return True
@@ -213,6 +234,9 @@ def _load_qwen3():
             return True
         try:
             from qwen_tts import Qwen3TTSModel
+            
+            # Liberar Whisper primero para dejar espacio a Qwen3 (~3.5GB)
+            _unload_asr()
             
             print(f"[Translator] Cargando Qwen3-TTS-CustomVoice en GPU...")
             print(f"[Translator] Atencion: {attn_mode}")
@@ -247,19 +271,36 @@ def _load_qwen3():
             return False
 
 def _run_warmup():
-    """Warmup pass: compila kernels CUDA y pre-calcula embeddings."""
+    """Warmup 2-paso: compila kernels CUDA + captura CUDA Graphs.
+
+    torch.compile(mode="reduce-overhead") captura CUDA Graphs automáticamente.
+    2 pases: 1° compila, 2° reusa la graph. Suficiente para calentar.
+    Nota: las primeras 1-2 solicitudes reales pueden ser más lentas si el
+    tamaño de entrada no coincide exactamente con los warmup texts.
+    """
     try:
-        warmup_text = "Warmup."
-        warmup_lang = "English"
+        warmup_texts = [
+            "Hello. Welcome to Alex Voice.",               # Pase 1: compilación inicial
+            "How are you doing today? I am doing great!",  # Pase 2: reuso con CUDA Graph
+        ]
         with torch.inference_mode():
-            wavs, sr = _qwen3_model.generate_custom_voice(
-                text=warmup_text,
-                language=warmup_lang,
-                speaker="Vivian",
-            )
-        del wavs
-        torch.cuda.synchronize()
-        print(f"[Translator] Warmup completo")
+            for i, text in enumerate(warmup_texts):
+                t0 = time.time()
+                wavs, sr = _qwen3_model.generate_custom_voice(
+                    text=text,
+                    language="English",
+                    speaker="Vivian",
+                    max_new_tokens=512,
+                    temperature=0.7,
+                )
+                torch.cuda.synchronize()
+                dt = (time.time() - t0) * 1000
+                # Liberar memoria inmediatamente para evitar picos VRAM
+                del wavs
+                torch.cuda.synchronize()
+                vram = torch.cuda.memory_allocated() / 1024**2
+                print(f"[Translator]   Warmup {i+1}/2: {dt:.0f}ms (VRAM: {vram:.0f}MB)")
+        print(f"[Translator] Warmup completo — modelo optimizado")
     except Exception as e:
         print(f"[Translator] Warmup ignorado: {e}")
 
@@ -278,26 +319,44 @@ def _unload_qwen3():
             print("[Translator] Qwen3-TTS descargado de GPU")
 
 def qwen3_synthesize(text, language, speaker='Serena', instruct=None,
-                      max_new_tokens=2048, temperature=0.7):
-    """Synthesize speech with Qwen3-TTS (optimizado + chunking para textos largos).
+                      max_new_tokens=6144, temperature=0.7):
+    """Synthesize speech with Qwen3-TTS (OPTIMIZADO).
+
+    OPTIMIZACIONES:
+    1. Chunk size 1500 chars (era 600) → menos chunks = menos overhead de primer token
+    2. max_new_tokens 6144 (era 2048) → permite chunks más largos sin truncar
+    3. Pipeline paralelo (ThreadPoolExecutor): mientras GPU genera chunk N, CPU prepara
+       la serialización WAV del chunk N-1. Overlap CPU↔GPU para máximo throughput.
+    4. Nota: las primeras 1-2 solicitudes serán más lentas mientras Triton termina de
+       compilar kernels para el tamaño exacto de entrada (warmup cubre tamaños típicos).
 
     Args:
         text: Texto a sintetizar.
         language: Idioma del texto (ej: 'English', 'Spanish').
         speaker: Voz predefinida (Vivian/Serena/Ono_Anna/Aiden/etc).
         instruct: Instruccion de voz en lenguaje natural (tono, velocidad, emocion).
-        max_new_tokens: Max tokens de audio generados por chunk. Mayor = audios mas largos.
+        max_new_tokens: Max tokens de audio generados por chunk. Mayor = chunks más largos.
         temperature: Control de estabilidad (menor = mas estable, mayor = mas variado).
     """
     if not _load_qwen3():
         return None, "Qwen3-TTS not available"
     try:
-        # Chunking: divide textos largos, genera audio por chunk, concatenado
         chunks = _chunk_text(text)
+        if not chunks:
+            return None, "No text to synthesize"
+
         all_audio = []
         sample_rate = None
+        t_total_start = time.time()
+
+        # ── Pipeline paralelo: GPU genera chunk i, CPU serializa chunk i-1 ──
+        #    Usamos ThreadPoolExecutor para delegar la conversión numpy→int16
+        #    mientras la GPU sigue generando el siguiente chunk.
+        previous_chunk_future = None
 
         for i, chunk in enumerate(chunks):
+            t_chunk_start = time.time()
+
             kwargs = {
                 'text': chunk,
                 'language': language,
@@ -308,25 +367,67 @@ def qwen3_synthesize(text, language, speaker='Serena', instruct=None,
             if instruct:
                 kwargs['instruct'] = instruct
 
+            # GPU: generar audio para este chunk
             with torch.inference_mode():
                 wavs, sr = _qwen3_model.generate_custom_voice(**kwargs)
+
+            torch.cuda.synchronize()
+            chunk_gpu_ms = (time.time() - t_chunk_start) * 1000
 
             if not wavs or len(wavs) == 0:
                 continue
 
-            sample_rate = sr
-            chunk_audio = np.asarray(wavs[0], dtype=np.float32)
-            all_audio.append(chunk_audio)
+            current_sr = sr
+            if sample_rate is None:
+                sample_rate = current_sr
+
+            # ── Delegación: convertir wavs[0] a float32 en CPU thread ──
+            #    La conversión GPU→CPU (np.asarray) ocurre EN el executor,
+            #    no bloqueando el hilo principal. Así GPU y CPU trabajan en paralelo.
+            #    Si hay un chunk anterior siendo serializado, esperar que termine
+            if previous_chunk_future is not None:
+                previous_result = previous_chunk_future.result()
+                if previous_result is not None:
+                    all_audio.append(previous_result)
+
+            # Enviar wavs[0] directo al executor — él hará la transferencia GPU→CPU
+            previous_chunk_future = _cpu_executor.submit(_convert_chunk_to_float32, wavs[0])
+
+            if len(chunks) > 1:
+                audio_secs = len(audio_data) / current_sr if current_sr else 0
+                print(f"[Translator]   Chunk {i+1}/{len(chunks)}: {chunk_gpu_ms:.0f}ms GPU para {audio_secs:.1f}s audio ({len(chunk)} chars)")
+
+        # Esperar el último chunk serializado
+        if previous_chunk_future is not None:
+            last_result = previous_chunk_future.result()
+            if last_result is not None:
+                all_audio.append(last_result)
 
         if not all_audio:
             return None, "No audio generated"
 
-        # Concatenar todos los chunks de audio
         full_audio = np.concatenate(all_audio) if len(all_audio) > 1 else all_audio[0]
+        total_ms = (time.time() - t_total_start) * 1000
+        total_secs = len(full_audio) / sample_rate if sample_rate else 0
+
+        if len(chunks) > 1:
+            print(f"[Translator] Total: {len(chunks)} chunks en {total_ms:.0f}ms para {total_secs:.1f}s audio")
+
         return (full_audio, sample_rate), None
 
     except Exception as e:
         return None, str(e)[:200]
+
+
+def _convert_chunk_to_float32(audio_data):
+    """Convierte GPU tensor → float32 numpy en CPU thread.
+    Se ejecuta en el ThreadPoolExecutor, en PARALELO con la generación GPU
+    del siguiente chunk. La transferencia GPU→CPU no bloquea el hilo principal.
+    """
+    # Si es tensor CUDA, mover a CPU primero (ocurre en este thread, no en main)
+    if hasattr(audio_data, 'cpu'):
+        audio_data = audio_data.cpu()
+    return np.asarray(audio_data, dtype=np.float32)
 
 
 # ── ASR (faster-whisper, CPU) ──
@@ -340,14 +441,18 @@ try:
 except ImportError:
     pass
 
-def _get_asr(model_name="base"):
+def _get_asr(model_name="large-v3-turbo"):
     if model_name in _asr_models:
         return _asr_models[model_name]
     with _asr_lock:
         if model_name in _asr_models:
             return _asr_models[model_name]
         try:
-            m = WhisperModel(model_name, device="cpu", compute_type="int8")
+            # Liberar Qwen3 primero si está en VRAM (nunca se usan juntos)
+            if _qwen3_model is not None:
+                print(f"[Translator] Liberando Qwen3-TTS para cargar ASR...")
+                _unload_qwen3()
+            m = WhisperModel(model_name, device="cuda", compute_type="int8_float16")
             _asr_models[model_name] = m
             return m
         except Exception as e:
@@ -372,7 +477,7 @@ def transcribe_audio(audio_b64, language="auto"):
     
     model_name = os.environ.get("TRANSLATOR_ASR_MODEL")
     if not model_name:
-        model_name = "small" if language in ("es", "ja") else "base"
+        model_name = "large-v3-turbo"
     model = _get_asr(model_name)
     if model is None:
         return None, None, "ASR model not available"
@@ -533,7 +638,7 @@ class TranslatorHandler(SimpleHTTPRequestHandler):
             language = data.get("language", "Spanish")
             speaker = data.get("speaker", "Serena")
             instruct = data.get("instruct", None)
-            max_new_tokens = data.get("max_new_tokens", 2048)
+            max_new_tokens = data.get("max_new_tokens", 6144)
             temperature = data.get("temperature", 0.7)
             
             if not text:
@@ -631,16 +736,17 @@ def main():
     print(f"\n{'='*50}")
     print(f"  >> Alex Voice — Translator Server")
     print(f"  >> Port: {PORT}")
-    print(f"  >> STT:   faster-whisper (CPU)")
+    print(f"  >> STT:   faster-whisper large-v3-turbo (GPU)")
     print(f"  >> TRANS: argos-translate (CPU)")
     print(f"  >> TTS:   Qwen3-TTS-CustomVoice (GPU)")
     print(f"{'='*50}\n")
     
-    # Pre-load faster-whisper
+    # Pre-load faster-whisper large-v3-turbo (GPU) — ~3GB download first time
     if HAVE_WHISPER:
+        print(f"[Translator] Cargando faster-whisper large-v3-turbo en GPU...")
         t0 = time.time()
-        _get_asr("base")
-        print(f"[Translator] faster-whisper base cargado en {time.time()-t0:.1f}s")
+        _get_asr("large-v3-turbo")
+        print(f"[Translator] faster-whisper large-v3-turbo cargado en {time.time()-t0:.1f}s")
     
     # Pre-load core argos pairs
     if _install_core_pairs():
@@ -648,11 +754,10 @@ def main():
     else:
         print(f"[Translator] argos core pairs incompletos — se cargaran bajo demanda")
     
-    # Pre-load Qwen3 (will be slow but first request will be fast)
-    print(f"[Translator] Qwen3-TTS se cargara bajo demanda")
-    
+    # Iniciar servidor HTTP primero (rápido, no bloquea)
     httpd = HTTPServer(("0.0.0.0", PORT), TranslatorHandler)
-    print(f"[Translator] Servidor listo en http://localhost:{PORT}")
+    print(f"[Translator] Servidor HTTP listo en http://localhost:{PORT}")
+    print(f"[Translator] Qwen3-TTS se cargará BAJO DEMANDA (libera Whisper primero si es necesario)")
     
     try:
         httpd.serve_forever()

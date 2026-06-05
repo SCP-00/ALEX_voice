@@ -188,7 +188,7 @@ class MenuHandler(SimpleHTTPRequestHandler):
         if self.path == "/api/start/teacher":
             self._start_mode("teacher", port=3000, mode_name="teacher")
         elif self.path == "/api/start/conv":
-            self._start_mode("conv", port=3000, mode_name="conversation")
+            self._start_mode("conv", port=3001, mode_name="conversation")
         elif self.path == "/api/start/translator":
             self._start_mode("translator", port=3003, mode_name="translator")
         elif self.path == "/api/stop":
@@ -216,7 +216,26 @@ class MenuHandler(SimpleHTTPRequestHandler):
                 self._json({"error": "No se pudo iniciar el Traductor"})
             return
 
-        # Teacher/Conversation: necesita llama-server
+        if name == "conv":
+            model = find_model()
+            if not model:
+                self._json({"error": "No se encontró modelo GGUF. Ejecuta setup.bat primero."})
+                return
+            llama_ok = start_llama(model)
+            if not llama_ok:
+                self._json({"error": "llama-server no pudo cargar el modelo en GPU"})
+                return
+            ok = start_server("conv_server.py", "conv", 3001, "conversation")
+            if ok:
+                t = Thread(target=lambda: (time.sleep(2), open_browser("http://localhost:3001")))
+                t.daemon = True
+                t.start()
+                self._json({"ok": True, "url": "http://localhost:3001", "mode": "conversation"})
+            else:
+                self._json({"error": "No se pudo iniciar Conversación"})
+            return
+
+        # Teacher: necesita llama-server
         model = find_model()
         if not model:
             self._json({"error": "No se encontró modelo GGUF. Ejecuta setup.bat primero."})

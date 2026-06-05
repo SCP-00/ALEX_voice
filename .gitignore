@@ -32,6 +32,9 @@ bin/piper/*.ort
 bin/piper/*phonemize*
 bin/piper/espeak-ng-data/
 
+# Python virtual environment
+venv/
+
 # OS files
 Thumbs.db
 .DS_Store
