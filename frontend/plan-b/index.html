@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Plan B — Alex Voice (GPU+CPU)</title>
+<title>Alex Voice — Teacher & Conversation</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -25,7 +25,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);heigh
 .cache-info{font-size:9px;color:var(--textDim);margin-top:4px;padding-top:4px;border-top:1px solid var(--border)}
 
 /* ── Main ── */
-.main{flex:1;display:flex;flex-direction:min-width:0}
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
 .header{padding:12px 20px;border-bottom:1px solid var(--border);background:var(--surface);display:flex;align-items:center;justify-content:space-between}
 .header h2{font-size:14px;font-weight:600}
 .header .badge{font-size:10px;color:var(--textDim);background:var(--surface2);padding:2px 8px;border-radius:10px}
@@ -78,12 +78,12 @@ textarea:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--glow)}
 <body>
 
 <div class="sidebar">
-<div class="logo">⚡ AlexVoice</div>
-<div class="plan-badge">PLAN B · GPU+CPU</div>
+<div class="logo">⚡ Alex Voice</div>
+<div class="plan-badge">LOCAL · 3000</div>
 <div class="mode-group" id="modeGroup">
 <button class="mode-btn active" data-mode="teacher" onclick="setMode('teacher')"><strong>🎓 Teacher</strong><br><span style="font-size:10px;color:var(--textDim)">Explicaciones claras</span></button>
 <button class="mode-btn" data-mode="conversation" onclick="setMode('conversation')"><strong>💬 Conversación</strong><br><span style="font-size:10px;color:var(--textDim)">Charla natural</span></button>
-<button class="mode-btn" data-mode="translator" onclick="setMode('translator')"><strong>🌍 Traductor</strong><br><span style="font-size:10px;color:var(--textDim)">ES/EN/JA</span></button>
+<!-- 🌍 Traductor movido a puerto 3003 (app independiente) -->
 </div>
 <div class="stats-box" id="statsBox">
 <div>LLM: <span class="val" id="sLlama">—</span></div>
@@ -97,12 +97,12 @@ textarea:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--glow)}
 
 <div class="main">
 <div class="header">
-<h2 id="modeTitle">💬 Plan B — LLM GPU · TTS CPU</h2>
+<h2 id="modeTitle">💬 Alex Voice — LLM GPU · TTS CPU</h2>
 <span class="badge" id="modeBadge">Teacher Mode</span>
 </div>
 
 <div class="messages" id="msgs">
-<div class="msg assistant">⚡ Plan B activo: Qwen3.5-2B (GPU) + Kokoro-82M + Piper (fallback)<div class="ts">Alex Voice · Plan B</div></div>
+<div class="msg assistant">⚡ Alex Voice activo: LLM local (GPU) + Kokoro-82M + Piper (fallback)<div class="ts">Alex Voice · Local</div></div>
 </div>
 <div class="think-indicator" id="think"><span></span><span></span><span></span></div>
 
@@ -138,11 +138,7 @@ const MODES = {
     badge: 'Conversation Mode',
     temp: 0.7,
   },
-  translator: {
-    name: '🌍 Traductor',
-    badge: 'Translator Mode',
-    temp: 0.3,
-  },
+  // translator: movido a puerto 3003 (app independiente)
 };
 
 let currentMode = 'teacher';
@@ -159,7 +155,7 @@ let pollTimer = null;
 function setMode(m) {
   currentMode = m;
   const c = MODES[m];
-  document.getElementById('modeTitle').textContent = '💬 Plan B — ' + c.name;
+  document.getElementById('modeTitle').textContent = '💬 Alex Voice — ' + c.name;
   document.getElementById('modeBadge').textContent = c.badge;
   document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
   document.querySelector(`[data-mode="${m}"]`).classList.add('active');
@@ -532,12 +528,7 @@ async function convertToWav(webmBlob) {
   
   // Downsample to 16kHz
   const targetSr = 16000;
-  const ratio = sr / targetSr;
-  const newLen = Math.floor(pcm.length / ratio);
-  const resampled = new Float32Array(newLen);
-  for (let i = 0; i < newLen; i++) {
-    resampled[i] = pcm[Math.floor(i * ratio)];
-  }
+  const resampled = downsampleBuffer(pcm, sr, targetSr);
   
   // Convert to 16-bit PCM
   const int16 = new Int16Array(resampled.length);
@@ -575,6 +566,26 @@ async function convertToWav(webmBlob) {
   }
   
   return new Blob([buffer], { type: 'audio/wav' });
+}
+
+function downsampleBuffer(buffer, sampleRate, targetRate) {
+  if (targetRate === sampleRate) return buffer;
+  const ratio = sampleRate / targetRate;
+  const newLength = Math.round(buffer.length / ratio);
+  const result = new Float32Array(newLength);
+  let offsetBuffer = 0;
+  for (let offsetResult = 0; offsetResult < result.length; offsetResult++) {
+    const nextOffsetBuffer = Math.min(buffer.length, Math.round((offsetResult + 1) * ratio));
+    let accum = 0;
+    let count = 0;
+    for (let i = offsetBuffer; i < nextOffsetBuffer; i++) {
+      accum += buffer[i];
+      count++;
+    }
+    result[offsetResult] = count ? accum / count : 0;
+    offsetBuffer = nextOffsetBuffer;
+  }
+  return result;
 }
 
 function blobToBase64(blob) {

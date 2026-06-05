@@ -298,22 +298,27 @@ def _get_asr(model_name="base"):
             return None
 
 def transcribe_audio(audio_b64, language="auto"):
-    """Transcribe audio with faster-whisper."""
+    """Transcribe audio with faster-whisper.
+    Returns: (text, detected_lang, error) tuple.
+    """
     
     if not HAVE_WHISPER:
-        return None, "faster-whisper not installed"
+        return None, None, "faster-whisper not installed"
     
     try:
         raw_audio = base64.b64decode(audio_b64)
     except:
-        return None, "Invalid audio data"
+        return None, None, "Invalid audio data"
     
     if len(raw_audio) < 100:
-        return None, "Audio too small"
+        return None, None, "Audio too small"
     
-    model = _get_asr("base")
+    model_name = os.environ.get("TRANSLATOR_ASR_MODEL")
+    if not model_name:
+        model_name = "small" if language in ("es", "ja") else "base"
+    model = _get_asr(model_name)
     if model is None:
-        return None, "ASR model not available"
+        return None, None, "ASR model not available"
     
     try:
         # Parse WAV
@@ -325,21 +330,23 @@ def transcribe_audio(audio_b64, language="auto"):
         pcm = raw_audio[offset:]
         pcm_int16 = np.frombuffer(pcm, dtype=np.int16)
         if len(pcm_int16) == 0:
-            return None, "Empty audio"
+            return None, None, "Empty audio"
         pcm_float32 = pcm_int16.astype(np.float32) / 32768.0
         lang = None if language == "auto" else language
         
         segments, info = model.transcribe(
-            pcm_float32, language=lang, beam_size=1,
+            pcm_float32, language=lang, beam_size=5,
             vad_filter=True,
             vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=200,
                                 threshold=0.5, neg_threshold=0.35, min_speech_duration_ms=200),
+            condition_on_previous_text=False,
         )
         texts = [seg.text.strip() for seg in segments]
         full_text = " ".join(texts).strip()
-        return full_text, None
+        detected_lang = getattr(info, "language", None) or detect_language(full_text)
+        return full_text, detected_lang, None
     except Exception as e:
-        return None, str(e)[:300]
+        return None, None, str(e)[:300]
 
 
 # ── LANGUAGE DETECTION ──
@@ -526,12 +533,12 @@ class TranslatorHandler(SimpleHTTPRequestHandler):
                 self._json({"error": "No audio"})
                 return
             
-            text, error = transcribe_audio(audio_b64, lang)
+            text, whisper_lang, error = transcribe_audio(audio_b64, lang)
             if error:
                 self._json({"error": error})
                 return
             
-            detected_lang = detect_language(text)
+            detected_lang = whisper_lang or detect_language(text)
             self._json({
                 "text": text,
                 "detected_lang": detected_lang,
