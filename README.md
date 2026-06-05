@@ -4,32 +4,21 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
 [![CUDA](https://img.shields.io/badge/CUDA-12.4-green)](https://developer.nvidia.com/cuda-toolkit)
 
-**Alex Voice** es un asistente de voz con inteligencia artificial que corre **100% local** en tu PC con GPU NVIDIA. Soporta **Español, Inglés y Japonés** con 3 modos de interacción especializados.
+**Alex Voice** es un asistente de voz con inteligencia artificial que corre **100% local** en tu PC con GPU NVIDIA. Soporta múltiples idiomas con 3 modos de interacción especializados.
 
 Creado por [SCP-076](https://github.com/SCP-00) · Coded with ❤️ by [Buffy](https://codebuff.com) (AI Agent)
 
 ---
 
-## Estado Actual (auditoria 2026-06-05)
-
-Se audito el proyecto local y se corrigieron problemas de arranque del host `3000`, ASR del traductor y setup. Ver el detalle en [AUDIT.md](AUDIT.md).
-
-Puntos clave:
-- `localhost:3000` = Teacher + Conversation con LLM local via `launcher.py`.
-- `localhost:3003` = Traductor independiente con argos + Qwen3-TTS.
-- `setup.bat` ahora instala/verifica de forma idempotente y deja `llama-server`/modelo en rutas que `launcher.py` usa.
-- Para mejor ASR en espanol, selecciona `Desde: Espanol` antes de grabar.
-
----
-
 ## 🚀 Inicio Rápido
 
-### Opción 1: Script automático (recomendado)
+### Opción 1: Automática (recomendada)
 
 ```bash
 # 1. Descarga el ZIP desde GitHub
-# 2. Ejecuta setup.bat (verifica lo instalado y descarga lo faltante)
-# 3. Ejecuta run.bat y selecciona el modo deseado
+# 2. Haz doble clic en setup.bat (descarga modelos + instala dependencias)
+# 3. Haz doble clic en run.bat (abre menú principal en el navegador)
+# 4. Selecciona el modo deseado: 🎓 Teacher, 💬 Conversación o 🌍 Traductor
 ```
 
 ### Opción 2: Manual
@@ -39,7 +28,7 @@ Puntos clave:
 
 # 1. Instalar dependencias
 pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
-pip install argostranslate faster-whisper qwen-tts
+pip install kokoro piper-tts faster-whisper qwen-tts argostranslate
 
 # 2. Descargar llama-server desde:
 #    https://github.com/ggml-org/llama.cpp/releases
@@ -47,9 +36,8 @@ pip install argostranslate faster-whisper qwen-tts
 # 3. Descargar modelo Qwen2.5-1.5B-Q4_K_M (~1.1GB):
 #    https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF
 
-# 4. Iniciar
-python launcher.py                    # Teacher + Conversation (puerto 3000)
-python translator_server.py           # Traductor (puerto 3003)
+# 4. Iniciar menú principal
+python menu_server.py                    # Abre http://localhost:5000
 ```
 
 ---
@@ -61,20 +49,26 @@ python translator_server.py           # Traductor (puerto 3003)
 │                    ALEX VOICE                                │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
-│  ┌─────────────────────┐    ┌──────────────────────────┐    │
-│  │  Teacher + Conv     │    │  Translator               │    │
-│  │  (puerto 3000)      │    │  (puerto 3003)            │    │
-│  │                     │    │                          │    │
-│  │  LLM: Qwen2.5-1.5B │    │  STT: faster-whisper CPU  │    │
-│  │  TTS: Kokoro/Piper  │    │  TRANS: argos CPU        │    │
-│  │  ASR: faster-w      │    │  TTS: Qwen3-TTS GPU      │    │
-│  │  Caché: LRU 50      │    │  SIN LLM                 │    │
-│  └─────────────────────┘    └──────────────────────────┘    │
-│                                                             │
-│  ┌──────────────────────────────────────────────────┐       │
-│  │  llama-server (GPU, puerto 8081)                  │       │
-│  │  Qwen2.5-1.5B-Q4_K_M ~1.2GB VRAM                  │       │
-│  └──────────────────────────────────────────────────┘       │
+│  ┌───────────────────┐                                           │
+│  │  MENÚ PRINCIPAL   │  ← Abre http://localhost:5000             │
+│  │  (menu_server.py) │  Gestión de ciclo de vida de modos       │
+│  │  puerto 5000      │  API REST: /api/start, /api/stop         │
+│  └────────┬──────────┘                                           │
+│           │                                                      │
+│  ┌────────┴──────────┐    ┌──────────────────────────┐          │
+│  │  Teacher + Conv   │    │  Translator               │          │
+│  │  (puerto 3000)    │    │  (puerto 3003)            │          │
+│  │                   │    │                           │          │
+│  │  LLM: Qwen2.5-1.5B│    │  STT: faster-whisper CPU  │          │
+│  │  TTS: Kokoro/Piper│    │  TRANS: argos CPU         │          │
+│  │  ASR: faster-w    │    │  TTS: Qwen3-TTS GPU       │          │
+│  │  Caché: LRU 50    │    │  SIN LLM                  │          │
+│  └───────────────────┘    └──────────────────────────┘          │
+│                                                                  │
+│  ┌────────────────────────────────────────────────────┐         │
+│  │  llama-server (GPU, puerto 8081)                    │         │
+│  │  Qwen2.5-1.5B-Q4_K_M ~1.2GB VRAM                    │         │
+│  └────────────────────────────────────────────────────┘         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -84,23 +78,43 @@ python translator_server.py           # Traductor (puerto 3003)
 
 ### 🎓 Teacher
 Enseñanza de idiomas con explicaciones estructuradas.
-- Formato multi-output: 【TEXT】/【PRONUNCIATION】/【TRANSLATION】/【EXPLANATION】/【EXERCISE】
-- TTS solo lee 【TEXT】 — pronunciación y traducción se ven en pantalla
+- Formato multi-output: **【TEXT】** / **【PRONUNCIATION】** / **【TRANSLATION】** / **【EXPLANATION】** / **【EXERCISE】**
+- **【TTS_READING】** : el LLM genera una versión en Latin script para que Kokoro lea correctamente (romaji para JA, fonética para otros)
+- TTS usa campo TTS_READING → TEXT → respuesta completa
 - Ideal para aprender vocabulario y gramática
 
 ### 💬 Conversation
-Charla natural para practicar idiomas.
+Charla natural para practicar idiomas con **memoria completa** (~20 mensajes de contexto).
 - Responde SIEMPRE en el mismo idioma que escribes
 - Cross-language probado: EN, ES, JA, FR
-- 100% de acierto en benchmarks
+- Memoria conversacional enviada al backend en cada turno
 
 ### 🌍 Translator (servidor independiente)
 Traducción profesional con audio de alta calidad.
 - **STT:** faster-whisper (CPU) — reconocimiento de voz
 - **TRANS:** argos-translate (CPU) — traducción offline EN/ES/JA
-- **TTS:** Qwen3-TTS-CustomVoice (GPU) — audio natural con voces pre-definidas
+- **TTS:** Qwen3-TTS-CustomVoice (GPU) — audio natural con 10 idiomas nativos
+- **Sliders de voz:** panel colapsable con control de calma, velocidad y calidez
 - Selector manual de idiomas FROM/TO
 - Sin LLM — servicio ligero y especializado
+
+---
+
+## 📋 Menú Principal
+
+El sistema ahora tiene un **hub central** en `http://localhost:5000` que gestiona el ciclo de vida de todos los modos:
+
+```
+1️⃣  Tecla [1] → Inicia Teacher  (abre puerto 3000)
+2️⃣  Tecla [2] → Inicia Conversación (abre puerto 3000)
+3️⃣  Tecla [3] → Inicia Traductor (abre puerto 3003)
+Esc        → Detiene el modo activo
+```
+
+- **Overlay de carga** con barra de progreso mientras se carga el modelo en GPU
+- **Polling de estado** cada 3 segundos
+- **Botón "← Volver al menú"** en cada modo — detiene servidores y regresa al hub
+- **Gestión de procesos**: al detener un modo, se matan todos los subprocesos (llama-server incluido)
 
 ---
 
@@ -149,7 +163,7 @@ Traducción profesional con audio de alta calidad.
 
 | Idioma | Generación | Audio | Velocidad |
 |:-------|:----------:|:-----:|:---------:|
-| Inglés (Vivian) | 8.65s | 2.9s | ~3x RT |
+| Inglés (Aiden) | 8.65s | 2.9s | ~3x RT |
 | Español (Serena) | 7.02s | 2.7s | ~2.6x RT |
 
 ---
@@ -174,7 +188,6 @@ Traducción profesional con audio de alta calidad.
 | CUDA Toolkit | 12.4 | `pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124` |
 | CUDA Toolkit (compilación) | 12.4+ | [Descargar](https://developer.nvidia.com/cuda-downloads) - Necesario para flash-attn |
 | llama.cpp | b9479+ | Descargar de [GitHub Releases](https://github.com/ggml-org/llama.cpp/releases) |
-| Git | Cualquiera | [git-scm.com](https://git-scm.com/) (opcional) |
 
 ### Python Dependencies
 
@@ -194,8 +207,8 @@ pip install qwen-tts
 # 5. Reconocimiento de voz (CPU)
 pip install faster-whisper
 
-# 6. TTS ligero (opcional)
-pip install kokoro
+# 6. TTS ligero (CPU)
+pip install kokoro piper-tts
 
 # 7. Utilidades
 pip install psutil pynvml numpy
@@ -214,45 +227,59 @@ pip install flash-attn --no-build-isolation
 ```
 Alex_Voice/
 │
-├── B/
-│   ├── server.py              ← Servidor Teacher+Conversation (puerto 3000)
-│   ├── AGENT.md               ← Instrucciones del agente
-│   ├── plan.md                ← Plan de implementación
-│   └── README.md              ← Documentación del servidor
-│
-├── shared/
-│   └── translator.py          ← Módulo compartido (prompts en inglés, parsing multi-output)
+├── server.py                   ← Servidor Teacher+Conversation (puerto 3000)
+├── translator.py                ← Servidor Traductor (puerto 3003)
+├── menu_server.py               ← Menú principal (puerto 5000) ★ NUEVO
+├── launcher.py                  ← Lanzador legacy (reemplazado por menu_server)
 │
 ├── frontend/
-│   ├── plan-b/
-│   │   └── index.html         ← UI de Teacher+Conversation
-│   └── translator/
-│       └── index.html         ← UI del Traductor
+│   ├── index.html               ← UI de Teacher+Conversation
+│   ├── translator.html          ← UI del Traductor
+│   └── menu.html                ← Menú principal con 3 tarjetas ★ NUEVO
 │
-├── translator_server.py       ← Servidor traductor (puerto 3003)
-├── launcher.py                ← Lanzador unificado (inicia todo)
+├── prompts.py                   ← Prompts y parsing multi-output
 │
-├── setup.bat                  ← Instalación/verificación idempotente
-├── run.bat                    ← Inicio rápido (menú interactivo)
-├── AUDIT.md                   ← Auditoria, cambios y pendientes
+├── setup.bat                    ← Instalador automático (6 pasos) ★ REESCRITO
+├── run.bat                      ← Inicio rápido → menú principal ★ REESCRITO
 │
-├── CREDITS.md                 ← Créditos del proyecto
-├── LICENSE                    ← Licencia MIT
-└── README.md                  ← Esta documentación
+├── models/                      ← Modelos descargados por setup.bat
+│   ├── qwen2.5-1.5b-q4_k_m.gguf ← LLM (~1.1GB)
+│   ├── es_ES-sharvard-medium.onnx ← Piper TTS ES
+│   └── en_US-lessac-medium.onnx ← Piper TTS EN
+│
+├── llama-server-bin/            ← llama-server.exe descargado por setup.bat
+│
+├── AGENT.md                     ← Instrucciones del sistema
+├── AUDIT.md                     ← Auditoría técnica y pendientes
+│
+├── CREDITS.md                   ← Créditos del proyecto
+├── LICENSE                      ← Licencia MIT
+└── README.md                    ← Esta documentación
 ```
 
 ---
 
 ## 🔌 API Endpoints
 
+### Menú Principal (`localhost:5000`)
+
+| Endpoint | Método | Descripción |
+|:---------|:------:|:------------|
+| `/` | GET | Sirve `menu.html` |
+| `/api/status` | GET | Estado actual: modo activo, servidores, llama-server alive |
+| `/api/start/teacher` | POST | Inicia Teacher (llama-server + server.py en modo teacher) |
+| `/api/start/conv` | POST | Inicia Conversación (llama-server + server.py en modo conversation) |
+| `/api/start/translator` | POST | Inicia Traductor (translator.py) |
+| `/api/stop` | POST | Detiene todos los servidores y procesos |
+
 ### Servidor Principal (`localhost:3000`)
 
 | Endpoint | Método | Descripción |
 |:---------|:------:|:------------|
-| `/api/chat` | POST | Chat con modo (teacher/conversation) + multi-output |
+| `/api/chat` | POST | Chat con modo (teacher/conversation) + multi-output + **TTS_READING** |
 | `/api/tts` | POST | TTS Kokoro → Piper (fallback) |
 | `/api/tts/stream` | POST | TTS streaming |
-| `/api/asr` | POST | Reconocimiento de voz |
+| `/api/asr` | POST | Reconocimiento de voz (faster-whisper) |
 | `/api/stats` | GET | Estadísticas en vivo (GPU/CPU/RAM) |
 | `/api/cache/stats` | GET | Estadísticas de caché LRU |
 | `/api/cache/clear` | GET | Limpiar caché |
@@ -262,7 +289,7 @@ Alex_Voice/
 | Endpoint | Método | Descripción |
 |:---------|:------:|:------------|
 | `/api/translate` | POST | Traducir texto (from_lang, to_lang, text) |
-| `/api/tts` | POST | Audio Qwen3-TTS (text, language, speaker) |
+| `/api/tts` | POST | Audio Qwen3-TTS (text, language, speaker, instruct, max_new_tokens, temperature) |
 | `/api/asr` | POST | Reconocimiento de voz |
 | `/api/load` | POST | Precargar Qwen3-TTS en GPU |
 | `/api/unload` | POST | Descargar Qwen3-TTS de GPU |
