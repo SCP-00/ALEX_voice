@@ -8,7 +8,8 @@ if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 cd /d "%ROOT%"
 
 set "PY=python"
-set "LLAMA_URL=https://github.com/ggml-org/llama.cpp/releases/download/b9479/llama-b9479-bin-win-cuda-13.3-x64.zip"
+set "LLAMA_VERSION=b9479"
+set "LLAMA_URL=https://github.com/ggml-org/llama.cpp/releases/download/%LLAMA_VERSION%/llama-%LLAMA_VERSION%-bin-win-cuda-13.3-x64.zip"
 set "MODEL_URL=https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf"
 
 :: ── Cabecera ──
@@ -28,11 +29,13 @@ echo     - 10 GB de espacio libre en disco
 echo.
 echo   Se instalara:
 echo     - PyTorch CUDA 12.4
-echo     - llama-server (backend LLM)
+echo     - llama-server (backend LLM con 128k contexto)
 echo     - Modelo Qwen2.5-1.5B Q4_K_M (~1.1GB)
 echo     - Kokoro-82M TTS + Piper TTS
 echo     - faster-whisper (ASR)
 echo     - Qwen3-TTS + argos-translate (Traductor)
+echo     - DuckDuckGo Search (web search en Conversation)
+echo     - Qwen3.5-2B opcional (256k contexto nativo)
 echo.
 pause
 cls
@@ -75,6 +78,7 @@ call :pip_module qwen_tts qwen-tts
 call :pip_module argostranslate argostranslate
 call :pip_module psutil psutil
 call :pip_module pynvml pynvml
+call :pip_module ddgs duckduckgo-search
 call :pip_optional xformers xformers
 
 :: ── PyTorch CUDA ──
@@ -178,6 +182,10 @@ echo =============================================
 echo.
 echo   Proximo paso: Ejecuta run.bat
 echo   o haz doble clic en menu_server.py
+echo.
+echo   ✅ 128k contexto de conversacion
+echo   ✅ Web Search 🔍 en Conversation mode
+echo   ✅ Multi-modo (Teacher + Translator simultaneos)
 echo.
 echo   Acceso directo: http://localhost:5000
 echo.
