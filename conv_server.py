@@ -13,7 +13,13 @@ Usage:
 
 import os
 import sys
+import time
 from pathlib import Path
+
+# ── Structured logging ──
+def log_info(msg):
+    ts = time.strftime("%H:%M:%S")
+    print(f"[{ts}] [Conversation] [INFO] {msg}")
 
 # Set environment variables for server.py to pick up
 os.environ["CONV_MODE"] = "conversation"
@@ -34,9 +40,9 @@ port = int(os.environ["PLAN_B_PORT"])
 from server import main as server_main
 
 if __name__ == "__main__":
-    print(f"\n{'='*50}")
-    print(f"  >> Alex Voice — Conversation Mode (port {port})")
-    print(f"  >> AEC: mute-while-speaking enabled")
-    print(f"  >> http://localhost:{port}")
-    print(f"{'='*50}\n")
+    log_info(f"{'='*50}")
+    log_info(f"  Alex Voice — Conversation Mode (port {port})")
+    log_info(f"  AEC: mute-while-speaking enabled")
+    log_info(f"  http://localhost:{port}")
+    log_info(f"{'='*50}")
     server_main()

@@ -101,14 +101,21 @@ for i, arg in enumerate(sys.argv):
 FRONTEND_DIR = Path(__file__).parent / "frontend"
 PROJECT_ROOT = Path(__file__).parent
 
-def _safe_print(msg):
+# ── Structured logging ──────────────────────────────────
+def _log(level, msg):
+    ts = time.strftime("%H:%M:%S")
     try:
-        print(msg)
+        print(f"[{ts}] [Server] [{level}] {msg}")
     except UnicodeEncodeError:
         try:
-            print(msg.encode('ascii', errors='replace').decode('ascii'))
-        except Exception:
+            print(f"[{ts}] [Server] [{level}] {msg.encode('ascii', errors='replace').decode('ascii')}")
+        except:
             pass
+
+def log_ok(msg):   _log("OK", msg)
+def log_warn(msg): _log("WARN", msg)
+def log_err(msg):  _log("ERROR", msg)
+def log_info(msg): _log("INFO", msg)
 
 # ── Dependencias opcionales ────────────────────────────────
 try:
@@ -116,7 +123,7 @@ try:
     HAVE_PSUTIL = True
 except ImportError:
     HAVE_PSUTIL = False
-    _safe_print("[B] [!] psutil no instalado. Stats no disponibles.")
+    log_warn("psutil no instalado. Stats no disponibles.")
 
 IS_LINUX = platform.system() == 'Linux'
 
@@ -129,10 +136,10 @@ try:
     if isinstance(name, bytes):
         name = name.decode('utf-8', errors='replace')
     HAVE_NVML = True
-    _safe_print(f"[B] [OK] GPU: {str(name).replace(chr(0),'').strip()}")
+    log_ok(f"GPU: {str(name).replace(chr(0),'').strip()}")
 except Exception:
     HAVE_NVML = False
-    _safe_print("[B] [!] nvidia-ml-py no disponible. Stats GPU no disponibles.")
+    log_warn("nvidia-ml-py no disponible. Stats GPU no disponibles.")
 
 # ── Sanitizador de texto para TTS ───────────────────────────
 def _sanitize_tts_text(text):
@@ -158,7 +165,7 @@ try:
     from kokoro import KPipeline
     HAVE_KOKORO = True
 except ImportError:
-    _safe_print("[B] [!] kokoro no instalado. pip install kokoro")
+    log_warn("kokoro no instalado. pip install kokoro")
 
 # Map: B language (es/en) -> Kokoro lang_code + voice
 KOKORO_CONFIG = {
@@ -188,11 +195,11 @@ def _get_kokoro_pipeline(lang):
             t0 = time.time()
             pipeline = KPipeline(lang_code=code)
             elapsed = (time.time() - t0) * 1000
-            _safe_print(f"[B] [Kokoro] {lang} pipeline cargado en {elapsed:.0f}ms")
+            log_info(f"Kokoro {lang} pipeline: {elapsed:.0f}ms")
             KOKORO_PIPELINES[code] = pipeline
             return pipeline, voice
         except Exception as e:
-            _safe_print(f"[B] [Kokoro] Error cargando {lang}: {e}")
+            log_err(f"Kokoro {lang}: {e}")
             return None, None
 
 
@@ -219,7 +226,7 @@ def _kokoro_synthesize_stream(text, lang):
             audio_int16 = (audio_float32 * 32767).astype(np.int16)
             yield (24000, audio_int16.tobytes())
     except Exception as e:
-        _safe_print(f"[B] [Kokoro] Stream error: {e}")
+        log_err(f"Kokoro stream: {e}")
 
 
 # ── Piper TTS Python API ───────────────────────────────────
@@ -228,7 +235,7 @@ try:
     from piper import PiperVoice
     HAVE_PIPER_PYTHON = True
 except ImportError:
-    _safe_print("[B] [!] piper-tts no instalado. pip install piper-tts")
+    log_warn("piper-tts no instalado. pip install piper-tts")
 
 class PiperTTS:
     """Modelos Piper cargados en memoria. Latencia ~45-65ms."""
@@ -248,16 +255,16 @@ class PiperTTS:
             try:
                 t0 = time.time()
                 self.es_voice = PiperVoice.load(self.es_model_path, use_cuda=False)
-                _safe_print(f"[B] [PiperTTS] ES cargado en {(time.time()-t0)*1000:.0f}ms")
+                log_info(f"Piper ES: {(time.time()-t0)*1000:.0f}ms")
             except Exception as e:
-                _safe_print(f"[B] [PiperTTS] Error ES: {e}")
+                log_err(f"Piper ES: {e}")
         if self.en_model_path:
             try:
                 t0 = time.time()
                 self.en_voice = PiperVoice.load(self.en_model_path, use_cuda=False)
-                _safe_print(f"[B] [PiperTTS] EN cargado en {(time.time()-t0)*1000:.0f}ms")
+                log_info(f"Piper EN: {(time.time()-t0)*1000:.0f}ms")
             except Exception as e:
-                _safe_print(f"[B] [PiperTTS] Error EN: {e}")
+                log_err(f"Piper EN: {e}")
         self.available = (self.es_voice is not None) or (self.en_voice is not None)
 
     def synthesize(self, text, lang='es'):
@@ -297,7 +304,7 @@ class PiperTTS:
                 buf[44:44+data_size] = pcm.tobytes()
                 return bytes(buf)
             except Exception as e:
-                _safe_print(f"[B] [PiperTTS] Error: {e}")
+                log_err(f"PiperTTS: {e}")
                 return None
 
     def synthesize_stream(self, text, lang='es'):
@@ -315,12 +322,76 @@ class PiperTTS:
                     elif hasattr(c, 'audio_int16_bytes') and c.audio_int16_bytes is not None:
                         yield (sr, c.audio_int16_bytes)
             except Exception as e:
-                _safe_print(f"[B] [PiperTTS] Stream error: {e}")
+                log_err(f"PiperTTS stream: {e}")
 
     def stop(self):
         self.es_voice = None
         self.en_voice = None
         self.available = False
+
+# ── Web Search (DuckDuckGo) ──────────────────────────────
+HAVE_WEB = False
+_web_search_lock = threading.Lock()
+_WEB_CACHE = {}
+
+try:
+    from duckduckgo_search import DDGS
+    HAVE_WEB = True
+    log_ok("DuckDuckGo Search disponible")
+except ImportError:
+    log_warn("duckduckgo-search no instalado. pip install ddgs")
+
+
+def web_search(query, max_results=5):
+    """Busca en DuckDuckGo y retorna resultados formateados.
+    
+    Cachea resultados para búsquedas repetidas (misma query, ~5 min).
+    Retorna string con los resultados formateados para inyectar en el prompt.
+    """
+    if not HAVE_WEB or not query:
+        return None
+    
+    cache_key = query.lower().strip()
+    with _web_search_lock:
+        if cache_key in _WEB_CACHE:
+            cached_time, cached_result = _WEB_CACHE[cache_key]
+            if time.time() - cached_time < 300:  # 5 min cache
+                log_info(f"Web cache HIT: {query[:50]}...")
+                return cached_result
+    
+    try:
+        t0 = time.time()
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=max_results))
+        elapsed = (time.time() - t0) * 1000
+        
+        if not results:
+            log_info(f"Web search: sin resultados para '{query[:50]}...' ({elapsed:.0f}ms)")
+            return None
+        
+        # Formatear resultados
+        formatted = []
+        for i, r in enumerate(results[:max_results], 1):
+            title = r.get('title', '').strip()
+            body = r.get('body', '').strip()
+            href = r.get('href', '').strip()
+            if title or body:
+                formatted.append(f"[{i}] {title}\n   {body}")
+        
+        if not formatted:
+            return None
+        
+        result_str = "\n\n--- Resultados de búsqueda web ---\n" + "\n".join(formatted) + "\n--- Fin de resultados web ---"
+        
+        with _web_search_lock:
+            _WEB_CACHE[cache_key] = (time.time(), result_str)
+        
+        log_info(f"Web search: {len(results)} resultados en {elapsed:.0f}ms")
+        return result_str
+        
+    except Exception as e:
+        log_err(f"Web search: {e}")
+        return None
 
 # ── ASR (faster-whisper) ───────────────────────────────────
 HAVE_FASTER_WHISPER = False
@@ -331,7 +402,7 @@ try:
     from faster_whisper import WhisperModel
     HAVE_FASTER_WHISPER = True
 except ImportError:
-    _safe_print("[B] [!] faster-whisper no instalado. pip install faster-whisper")
+    log_warn("faster-whisper no instalado. pip install faster-whisper")
 
 def _find_wav_data_offset(audio_bytes):
     data_pos = audio_bytes.find(b'data', 12)
@@ -346,11 +417,11 @@ def _get_asr_model(model_name):
         try:
             t0 = time.time()
             model = WhisperModel(model_name, device="cuda", compute_type="int8_float16")
-            _safe_print(f"[B] [ASR] faster-whisper {model_name} cargado en {(time.time()-t0)*1000:.0f}ms")
+            log_info(f"Whisper {model_name}: {(time.time()-t0)*1000:.0f}ms")
             _asr_models[model_name] = model
             return model
         except Exception as e:
-            _safe_print(f"[B] [!] Error cargando {model_name}: {e}")
+            log_err(f"Whisper {model_name}: {e}")
             return None
 
 def _asr_transcribe(audio_bytes, language="auto", model_name="small"):
@@ -571,7 +642,7 @@ def _run_piper_file(text, model_path, piper_exe):
         except: pass
         return None
     except Exception as e:
-        _safe_print(f"[B] [TTS-file] Error: {e}")
+        log_err(f"Piper subprocess: {e}")
         return None
 
 # ── Servidor HTTP ───────────────────────────────────────────
@@ -614,6 +685,8 @@ class Handler(SimpleHTTPRequestHandler):
             self._handle_tts_stream(body)
         elif self.path == "/api/asr":
             self._handle_asr(body)
+        elif self.path == "/api/web_search":
+            self._handle_web_search(body)
         else:
             self.send_response(404)
             self.end_headers()
@@ -656,6 +729,25 @@ class Handler(SimpleHTTPRequestHandler):
                         if msg.get("role") == "user":
                             msg["content"] = f"{msg.get('content', '')}\n[Target language: {target_lang}]"
                             break
+                
+                # ── Web Search: buscar en web SI el usuario activó el toggle ──
+                web_results = None
+                if data.get("web_search") and mode == 'conversation':
+                    # Buscar los últimos mensajes del usuario para formular query
+                    for msg in reversed(messages):
+                        if msg.get("role") == "user":
+                            query = msg.get('content', '')[:200]
+                            web_results = web_search(query)
+                            break
+                    if web_results:
+                        # Inyectar resultados web en el último mensaje del usuario
+                        for msg in reversed(messages):
+                            if msg.get("role") == "user":
+                                msg["content"] = msg["content"] + web_results
+                                break
+                        # Aumentar n_predict para dar espacio a la respuesta con contexto web
+                        data["n_predict"] = max(data.get("n_predict", 512), 1024)
+                
                 chat_data = {
                     "messages": messages,
                     "n_predict": data.get("n_predict", 512),
@@ -664,6 +756,7 @@ class Handler(SimpleHTTPRequestHandler):
                     }.get(mode, 0.7)),
                     "stream": data.get("stream", False),
                 }
+                
             else:
                 # Build messages with proper system prompt from translator module
                 user_text = data.get('text', '')
@@ -687,7 +780,7 @@ class Handler(SimpleHTTPRequestHandler):
             if not chat_data.get("stream"):
                 cached = _response_cache.get(chat_data.get("messages", []))
                 if cached:
-                    _safe_print(f"[B] [proxy] Cache HIT! {len(cached)} chars")
+                    log_info(f"Cache HIT! {len(cached)} chars")
                     result = {
                         "choices": [{"message": {"content": cached}}],
                         "usage": {"completion_tokens": 0, "prompt_tokens": 0},
@@ -763,10 +856,10 @@ class Handler(SimpleHTTPRequestHandler):
 
         except urllib.error.HTTPError as e:
             err = e.read().decode(errors='replace')[:500]
-            _safe_print(f"[B] [proxy] llama-server HTTP {e.code}")
+            log_err(f"llama-server HTTP {e.code}: {err[:100]}")
             self._json_response({"error": f"HTTP {e.code}: {err}"})
         except Exception as e:
-            _safe_print(f"[B] [proxy] {type(e).__name__}: {e}")
+            log_err(f"{type(e).__name__}: {e}")
             self._json_response({"error": str(e)[:300]})
 
     def _handle_tts(self, body):
@@ -841,7 +934,7 @@ class Handler(SimpleHTTPRequestHandler):
                             wav_data = bytes(buf)
                             method = "kokoro"
                     except Exception as e:
-                        _safe_print(f"[B] [TTS] Kokoro falló: {e}")
+                        log_err(f"Kokoro falló: {e}")
                         method = "kokoro_fallback"
             
             # ── 2. Piper Python API (fallback) ──
@@ -868,7 +961,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return
 
             dur = round((time.time() - t0) * 1000)
-            _safe_print(f"[B] [TTS] {len(wav_data)}B en {dur}ms ({method})")
+            log_info(f"TTS: {len(wav_data)}B en {dur}ms ({method})")
             self.send_response(200)
             self.send_header("Content-Type", "audio/wav")
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -877,7 +970,7 @@ class Handler(SimpleHTTPRequestHandler):
             self.wfile.write(wav_data)
 
         except Exception as e:
-            _safe_print(f"[B] [TTS] Error: {e}")
+            log_err(f"TTS: {e}")
             self._json_response({"error": str(e)[:200]})
 
     def _handle_tts_stream(self, body):
@@ -942,11 +1035,36 @@ class Handler(SimpleHTTPRequestHandler):
                 self.wfile.flush()
                 total_pcm += len(pcm)
             dur = round((time.time() - t0) * 1000)
-            _safe_print(f"[B] [TTS-stream] {total_pcm}B en {dur}ms ({engine_used})")
+            log_info(f"TTS-stream: {total_pcm}B en {dur}ms ({engine_used})")
         except Exception as e:
-            _safe_print(f"[B] [TTS-stream] Error: {e}")
+            log_err(f"TTS-stream: {e}")
             if not headers_sent:
                 self._json_response({"error": str(e)[:200]})
+
+    def _handle_web_search(self, body):
+        """Endpoint de búsqueda web DuckDuckGo. 
+        
+        Acepta: {"query": "texto de búsqueda", "max": 5}
+        Retorna: {"results": [...], "count": N} o {"error": "..."}
+        """
+        try:
+            data = json.loads(body)
+            query = data.get("query", "").strip()
+            max_results = min(data.get("max", 5), 10)
+            if not query:
+                self._json_response({"error": "query vacía"})
+                return
+            result_str = web_search(query, max_results)
+            if result_str:
+                self._json_response({
+                    "ok": True,
+                    "results": result_str,
+                    "count": result_str.count("["),
+                })
+            else:
+                self._json_response({"ok": False, "results": "", "count": 0})
+        except Exception as e:
+            self._json_response({"error": str(e)[:200]})
 
     def _handle_asr(self, body):
         """ASR con faster-whisper. Auto-switch: base (ES/EN), small (JA)."""
@@ -985,7 +1103,7 @@ class Handler(SimpleHTTPRequestHandler):
             return
 
         dur = round((time.time() - t0) * 1000)
-        _safe_print(f"[B] [ASR] {len(text_result)} chars en {dur}ms ({method_used})")
+        log_info(f"ASR: {len(text_result)} chars en {dur}ms ({method_used})")
         self._json_response({
             "text": text_result,
             "segments": segments_result or [],
@@ -1014,7 +1132,7 @@ class Handler(SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):
         msg = fmt % args
         if "/api/stats" not in msg:
-            _safe_print(f"[B] {msg}")
+            _log("DEBUG", f"HTTP {msg}")
 
 # ── Entry point ────────────────────────────────────────────
 def main():
@@ -1026,22 +1144,23 @@ def main():
 
     mode_name = SERVER_MODE if SERVER_MODE else "teacher"
     mode_label = {'teacher': '🎓 Teacher', 'conversation': '💬 Conversación'}.get(mode_name, mode_name)
-    _safe_print(f"\n{'='*50}")
-    _safe_print(f"  >> Alex Voice — {mode_label} (GPU+CPU)")
-    _safe_print(f"{'='*50}")
-    _safe_print(f"  Mode:         {mode_label}")
-    _safe_print(f"  Web UI:       http://localhost:{PORT}")
-    _safe_print(f"  Stats API:    http://localhost:{PORT}/api/stats")
-    _safe_print(f"  llama-server: {LLAMA_HOST}")
-    _safe_print(f"  Cache:        LRU {_response_cache._maxsize} entradas")
-    tts_str = "Kokoro-82M (principal) + Piper (fallback)" if HAVE_KOKORO else "Piper Python API (~45ms)"
-    _safe_print(f"  TTS:          {tts_str}")
-    _safe_print(f"  ASR:          faster-whisper small (GPU, ~1.5 GB VRAM)")
-    _safe_print(f"{'='*50}\n")
+    log_info(f"{'='*50}")
+    log_info(f"  Alex Voice — {mode_label} (GPU+CPU)")
+    log_info(f"{'='*50}")
+    log_info(f"  Mode:         {mode_label}")
+    log_info(f"  Web UI:       http://localhost:{PORT}")
+    log_info(f"  Stats API:    http://localhost:{PORT}/api/stats")
+    log_info(f"  llama-server: {LLAMA_HOST}")
+    log_info(f"  Cache:        LRU {_response_cache._maxsize} entradas")
+    tts_str = "Kokoro-82M (principal)" if HAVE_KOKORO else "Piper"
+    log_info(f"  TTS:          {tts_str}")
+    log_info(f"  ASR:          Whisper small (GPU, ~1.5 GB VRAM)")
+    web_str = "✅ DuckDuckGo" if HAVE_WEB else "❌ No disponible"
+    log_info(f"  Web Search:   {web_str}")
+    log_info(f"{'='*50}\n")
 
-    # Cargar ASR small al inicio (~1.5 GB VRAM en GPU)
     if HAVE_FASTER_WHISPER:
-        _safe_print(f"[B] [ASR] Cargando faster-whisper small...")
+        log_info("Cargando Whisper small...")
         _get_asr_model("small")
 
     # Cargar Piper TTS
@@ -1054,12 +1173,12 @@ def main():
             en_model_path=en_model if en_model.exists() else None,
         )
         if _piper_tts and _piper_tts.available:
-            _safe_print(f"[B] [PiperTTS] Listo! Latencia ~45ms por sintesis")
+            log_ok("Piper listo")
 
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
-        _safe_print("\n[B] Deteniendo...")
+        log_info("Deteniendo...")
     finally:
         _stats_collector.stop()
         if _piper_tts:
@@ -1068,7 +1187,7 @@ def main():
         if HAVE_NVML:
             try: pynvml.nvmlShutdown()
             except: pass
-        _safe_print("[B] Detenido.")
+        log_info("Detenido.")
 
 if __name__ == "__main__":
     main()

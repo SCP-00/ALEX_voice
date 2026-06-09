@@ -179,29 +179,26 @@ textarea:focus{border-color:var(--translator);box-shadow:0 0 0 2px rgba(139,92,2
     <button class="mode-btn" id="modeConv" onclick="setTranslatorMode('conversation')">💬 Conversación (2 personas)</button>
   </div>
 
-  <!-- Voice Settings (collapsible) -->
+  <!-- Voice Settings (collapsible) — Solo velocidad (Kokoro) -->
   <button class="voice-toggle" id="voiceToggle" onclick="toggleVoicePanel()">
     <span>🎙️</span>
-    <span>Ajustes de voz</span>
+    <span>Velocidad de voz</span>
     <span style="margin-left:auto;font-size:10px">▾</span>
   </button>
   <div class="voice-panel" id="voicePanel">
     <div class="voice-row">
-      <label>Calma</label>
-      <input type="range" id="sliderCalm" min="0" max="100" value="70" oninput="updateVoicePreview()">
-      <span class="range-val" id="valCalm">70</span>
-    </div>
-    <div class="voice-row">
       <label>Velocidad</label>
-      <input type="range" id="sliderSpeed" min="0" max="100" value="40" oninput="updateVoicePreview()">
-      <span class="range-val" id="valSpeed">40</span>
+      <input type="range" id="sliderSpeed" min="0" max="100" value="60" oninput="updateVoicePreview()">
+      <span class="range-val" id="valSpeed">60</span>
     </div>
-    <div class="voice-row">
-      <label>Calidez</label>
-      <input type="range" id="sliderWarmth" min="0" max="100" value="65" oninput="updateVoicePreview()">
-      <span class="range-val" id="valWarmth">65</span>
+    <div class="voice-row" style="margin-bottom:0">
+      <div class="range-labels" style="display:flex;justify-content:space-between;font-size:9px;color:var(--textDim);width:100%;padding:0 2px">
+        <span>🐢 Lento</span>
+        <span>⚡ Natural</span>
+        <span>🚀 Rápido</span>
+      </div>
     </div>
-    <div class="voice-preview" id="voicePreview">Voz tranquila y cálida, ritmo pausado.</div>
+    <div class="voice-preview" id="voicePreview">Kokoro-82M · velocidad natural</div>
   </div>
 
   <!-- Input (hidden in conversation mode) -->
@@ -324,7 +321,7 @@ const SPEAKERS = {
 
 
 
-// ── VOICE SETTINGS (collapsible sliders) ──
+// ── VOICE SETTINGS (solo velocidad Kokoro) ──
 let voicePanelOpen = false;
 
 function toggleVoicePanel() {
@@ -333,52 +330,20 @@ function toggleVoicePanel() {
   document.getElementById('voiceToggle').classList.toggle('open', voicePanelOpen);
 }
 
-function buildInstruct(lang) {
-  const calm = parseInt(document.getElementById('sliderCalm').value);
-  const speed = parseInt(document.getElementById('sliderSpeed').value);
-  const warmth = parseInt(document.getElementById('sliderWarmth').value);
-
-  const calmMap = {
-    'en': ['energetic and lively', 'natural', 'calm, soft, and mellow'],
-    'es': ['enérgica y animada', 'natural', 'tranquila, suave y melosa'],
-    'ja': ['元気で活発な', '自然な', '穏やかで柔らかな'],
-    'fr': ['énergique et vive', 'naturelle', 'calme, douce et moelleuse'],
-    'ko': ['활기차고 생동감 있는', '자연스러운', '차분하고 부드러운'],
-    'zh': ['充满活力的', '自然的', '平静柔和的'],
-    'de': ['energiegeladen und lebhaft', 'natürlich', 'ruhig, sanft und weich'],
-    'pt': ['enérgica e animada', 'natural', 'calma, suave e macia'],
-  };
-  const cArr = calmMap[lang] || calmMap['es'];
-  const calmIdx = calm <= 30 ? 0 : (calm <= 60 ? 1 : 2);
-  const calText = cArr[calmIdx];
-
-  let speedText, warmthText;
-  if (lang === 'es') {
-    speedText = speed <= 30 ? 'Habla lento y pausado.' : (speed <= 60 ? 'Habla a un ritmo natural.' : 'Habla un poco más rápido.');
-    warmthText = warmth <= 30 ? 'Usa un tono neutro.' : (warmth <= 65 ? 'Usa un tono cálido.' : 'Usa un tono muy cálido y expresivo.');
-    return speedText + ' Voz ' + calText + '. ' + warmthText;
-  } else if (lang === 'ja') {
-    speedText = speed <= 30 ? 'ゆっくりと話してください。' : (speed <= 60 ? '自然な速度で話してください。' : '少し速く話してください。');
-    warmthText = warmth <= 30 ? '中立的なトーンで。' : (warmth <= 65 ? '温かみのあるトーンで。' : 'とても温かく表現豊かなトーンで。');
-    return speedText + ' ' + calText + '声。 ' + warmthText;
-  } else {
-    speedText = speed <= 30 ? 'Speak slowly and deliberately.' : (speed <= 60 ? 'Speak at a natural pace.' : 'Speak slightly faster.');
-    warmthText = warmth <= 30 ? 'Use a neutral tone.' : (warmth <= 65 ? 'Use a warm tone.' : 'Use a very warm and expressive tone.');
-    return speedText + ' Use a ' + calText + ' voice. ' + warmthText;
-  }
+function getKokoroSpeed() {
+  const val = parseInt(document.getElementById('sliderSpeed').value);
+  // Map 0-100 to 0.7-1.3 speed (0.7=lento, 1.0=natural, 1.3=rápido)
+  return 0.7 + (val / 100) * 0.6;
 }
 
 function updateVoicePreview() {
-  const calm = document.getElementById('sliderCalm');
-  const speed = document.getElementById('sliderSpeed');
-  const warmth = document.getElementById('sliderWarmth');
-  document.getElementById('valCalm').textContent = calm.value;
-  document.getElementById('valSpeed').textContent = speed.value;
-  document.getElementById('valWarmth').textContent = warmth.value;
-  // Show preview in current UI language (mostly ES)
-  const toLang = document.getElementById('toLang').value;
-  const preview = buildInstruct(toLang);
-  document.getElementById('voicePreview').textContent = '💬 ' + preview;
+  const val = document.getElementById('sliderSpeed').value;
+  document.getElementById('valSpeed').textContent = val;
+  const speed = getKokoroSpeed();
+  let label = '🐢 Lento';
+  if (speed >= 0.9 && speed <= 1.1) label = '⚡ Natural';
+  else if (speed > 1.1) label = '🚀 Rápido';
+  document.getElementById('voicePreview').textContent = '🎙 Kokoro-82M · ' + label + ' (' + speed.toFixed(2) + 'x)';
 }
 
 function setStatus(msg, busy) {
@@ -465,22 +430,18 @@ async function translate() {
     const ttsLang = LANG_TTS[data.to_lang] || 'English';
     const speaker = SPEAKERS[data.to_lang] || 'Serena';
     
-    showLoading(true, 'Generando audio con Qwen3-TTS...');
-    
-    const instruct = buildInstruct(data.to_lang);
-    
-    const audioR = await fetch(API + '/api/tts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        text: data.translation, 
-        language: ttsLang,
-        speaker: speaker,
-        instruct: instruct,
-        max_new_tokens: 3072,
-        temperature: 0.7,
-      }),
-    });
+    showLoading(true, 'Generando audio con Qwen3-TTS...');      const audioR = await fetch(API + '/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          text: data.translation, 
+          language: ttsLang,
+          speaker: speaker,
+          speed: getKokoroSpeed(),
+          max_new_tokens: 3072,
+          temperature: 0.7,
+        }),
+      });
     
     if (!audioR.ok) {
       const errData = await audioR.json();
@@ -795,8 +756,6 @@ async function toggleConvMic(person) {
       const ttsLang = LANG_TTS[toLang] || 'Spanish';
       const speaker = SPEAKERS[toLang] || 'Serena';
       
-      const instruct = buildInstruct(toLang);
-      
       const audioR = await fetch(API + '/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -804,7 +763,7 @@ async function toggleConvMic(person) {
           text: transData.translation, 
           language: ttsLang,
           speaker: speaker,
-          instruct: instruct,
+          speed: getKokoroSpeed(),
           max_new_tokens: 6144,
           temperature: 0.7,
         }),
@@ -869,21 +828,6 @@ function resetConvUI() {
 function escHtml(s) {
   if (!s) return '';
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-// Pre-load Qwen3-TTS in background
-async function preloadModel() {
-  try {
-    const r = await fetch(API + '/api/load', { method: 'POST', body: '{}' });
-    const data = await r.json();
-    if (data.ok) {
-      modelPreloaded = true;
-      console.log('Qwen3-TTS pre-cargado en', data.time_ms + 'ms');
-      setStatus('✅ Qwen3-TTS listo', false);
-    }
-  } catch (e) {
-    console.log('Pre-load no disponible (se cargara bajo demanda)');
-  }
 }
 
 // ── KEYBOARD SHORTCUTS ──

@@ -10,7 +10,7 @@ API:
   POST /api/start/teacher   → Inicia Teacher (llama-server + server.py)
   POST /api/start/conv      → Inicia Conversación (llama-server + server.py)
   POST /api/start/translator→ Inicia Traductor (translator.py)
-  POST /api/start/all       → Inicia todo
+  POST /api/start/llama     → Inicia llama-server (standalone)
   POST /api/stop            → Mata todos los procesos
 """
 
@@ -26,14 +26,38 @@ LLAMA_PORT = 8081
 LLAMA_HOST = f"http://localhost:{LLAMA_PORT}"
 
 PYTHON = sys.executable
-LLAMA_EXE = PROJECT_ROOT / "llama-server-bin" / "llama-server"
-LLAMA_EXE_WIN = PROJECT_ROOT / "llama-server-bin" / "llama-server.exe"
 MODEL_DIR = PROJECT_ROOT / "models"
+
+BACKEND_PRIORITY = ["llama-server-cuda", "llama-server-vulkan", "llama-server"]
+BACKEND_LABELS = {
+    "llama-server-cuda": "🎮 CUDA",
+    "llama-server-vulkan": "⚡ Vulkan",
+    "llama-server": "🖥️ CPU",
+}
+
+def find_best_llama():
+    """Busca el mejor backend disponible."""
+    llama_bin = PROJECT_ROOT / "llama-server-bin"
+    for name in BACKEND_PRIORITY:
+        candidate = llama_bin / name
+        if candidate.exists():
+            return candidate, BACKEND_LABELS.get(name, name)
+        win_candidate = llama_bin / f"{name}.exe"
+        if win_candidate.exists():
+            return win_candidate, BACKEND_LABELS.get(name, name)
+    # Fallback: buscar en llama.cpp build dir
+    for path in [
+        PROJECT_ROOT / "llama.cpp" / "build" / "bin" / "llama-server",
+        PROJECT_ROOT / "llama.cpp" / "build-vulkan" / "bin" / "llama-server",
+    ]:
+        if path.exists():
+            return path, "🖥️ CPU"
+    return None, "❌ No disponible"
 
 # ── Procesos activos ──
 _running = {}   # nombre -> subprocess.Popen
 _lock = Lock()
-_current_mode = None
+_current_modes = set()  # múltiples modos pueden estar activos
 
 def eprint(msg):
     try: print(msg)
@@ -43,25 +67,36 @@ def log(msg):
     eprint(f"[Menu] {msg}")
 
 # ── Buscar modelo GGUF ──
+# Prioridad: Qwen3.5-2B (256k contexto, mejor calidad) > Qwen2.5-1.5B (estándar)
 def find_model():
     if not MODEL_DIR.exists():
         return None
+    # Preferir Qwen3.5-2B (más inteligente, 256k contexto nativo)
+    qwen35 = MODEL_DIR / "qwen3.5-2b-q4_k_m.gguf"
+    if qwen35.exists():
+        return qwen35
+    qwen25 = MODEL_DIR / "qwen2.5-1.5b-q4_k_m.gguf"
+    if qwen25.exists():
+        return qwen25
     models = sorted(MODEL_DIR.glob("*.gguf"))
     return models[0] if models else None
 
+def get_model_context():
+    """Retorna el contexto recomendado según el modelo."""
+    model = find_model()
+    if model and "qwen3.5" in model.name.lower():
+        return 131072  # 128k para Qwen3.5-2B (soporta 256k nativo)
+    return 131072  # 128k para todos los modelos modernos (~2.4GB VRAM total)
+
 def find_llama():
-    if LLAMA_EXE.exists():
-        return LLAMA_EXE
-    if LLAMA_EXE_WIN.exists():
-        return LLAMA_EXE_WIN
-    # Fallback: solo revisar paths conocidos
-    for path in [
-        PROJECT_ROOT / "llama.cpp" / "llama-server",
-        PROJECT_ROOT / "llama.cpp" / "build" / "bin" / "llama-server",
-    ]:
-        if path.exists():
-            return path
+    exe, label = find_best_llama()
+    if exe:
+        return exe
     return None
+
+def get_backend_label():
+    _, label = find_best_llama()
+    return label
 
 def check_llama_alive():
     try:
@@ -78,9 +113,8 @@ def wait_for_llama(timeout=120):
             return True
         time.sleep(1)
     return False
-
 def kill_process(name):
-    global _current_mode
+    global _current_modes
     with _lock:
         proc = _running.pop(name, None)
         if proc and proc.poll() is None:
@@ -90,11 +124,11 @@ def kill_process(name):
             except:
                 try: proc.kill()
                 except: pass
-        if not _running:
-            _current_mode = None
+        # Actualizar modos activos
+        _current_modes = {m for m in _current_modes if m != name}
 
 def kill_all():
-    global _current_mode
+    global _current_modes
     with _lock:
         for name, proc in list(_running.items()):
             if proc and proc.poll() is None:
@@ -105,7 +139,7 @@ def kill_all():
                     try: proc.kill()
                     except: pass
         _running.clear()
-        _current_mode = None
+        _current_modes.clear()
     # Matar llama-server si está vivo (coincidencia exacta)
     try:
         subprocess.run(["pkill", "-x", "llama-server"],
@@ -121,12 +155,18 @@ def start_llama(model_path):
     if not exe:
         log("llama-server no encontrado")
         return False
+    backend_label = get_backend_label()
     args = [
         str(exe), "-m", str(model_path),
         "--host", "0.0.0.0", "--port", str(LLAMA_PORT),
-        "-ngl", "99", "-c", "8192",
+        "-c", str(get_model_context()),
         "--chat-template", "chatml", "--no-warmup",
     ]
+    # GPU layers: auto-detect by backend
+    if "cpu" in backend_label.lower():
+        args.extend(["-ngl", "0"])
+    else:
+        args.extend(["-ngl", "99"])
     # Set LD_LIBRARY_PATH for llama-server to find libllama.so
     llama_env = os.environ.copy()
     llama_bin_dir = str(PROJECT_ROOT / "llama-server-bin")
@@ -135,18 +175,17 @@ def start_llama(model_path):
         proc = subprocess.Popen(args, env=llama_env)
         with _lock:
             _running["llama-server"] = proc
-        log("llama-server iniciado, esperando carga del modelo...")
+        log(f"llama-server ({backend_label}) iniciado, esperando carga del modelo...")
         if wait_for_llama():
-            log("llama-server listo")
+            log(f"llama-server ({backend_label}) listo")
             return True
         log("Tiempo de espera agotado")
         return False
     except Exception as e:
         log(f"Error iniciando llama-server: {e}")
         return False
-
 def start_server(script, name, port, mode):
-    global _current_mode
+    global _current_modes
     path = PROJECT_ROOT / script
     if not path.exists():
         log(f"Script no encontrado: {path}")
@@ -175,7 +214,7 @@ def start_server(script, name, port, mode):
         )
         with _lock:
             _running[name] = proc
-            _current_mode = mode
+            _current_modes.add(name)
         time.sleep(2)
         return True
     except Exception as e:
@@ -198,7 +237,7 @@ class MenuHandler(SimpleHTTPRequestHandler):
             self._serve("menu.html")
         elif self.path == "/api/status":
             self._json({
-                "mode": _current_mode,
+                "modes": list(_current_modes),
                 "servers": list(_running.keys()),
                 "llama_alive": check_llama_alive(),
             })
@@ -219,14 +258,11 @@ class MenuHandler(SimpleHTTPRequestHandler):
             self._json({"error": "ruta no valida"})
 
     def _start_mode(self, name, port, mode_name):
-        if _current_mode:
-            self._json({
-                "error": f"Ya hay un modo activo: {_current_mode}. Detenlo antes de iniciar otro.",
-                "current_mode": _current_mode,
-            })
-            return
-
+        # Translator puede correr en paralelo con Teacher/Conversation
         if name == "translator":
+            if "translator" in _current_modes:
+                self._json({"ok": True, "url": "http://localhost:3003", "mode": "translator", "info": "Ya estaba corriendo"})
+                return
             ok = start_server("translator.py", "translator", 3003, "translator")
             if ok:
                 t = Thread(target=lambda: (time.sleep(3), open_browser("http://localhost:3003")))
@@ -236,6 +272,15 @@ class MenuHandler(SimpleHTTPRequestHandler):
             else:
                 self._json({"error": "No se pudo iniciar el Traductor"})
             return
+        
+        # Teacher y Conversation comparten llama-server, solo 1 a la vez
+        for active in _current_modes:
+            if active in ("teacher", "conv"):
+                self._json({
+                    "error": f"Ya hay un modo LLM activo: {active}. Teacher y Conversation comparten llama-server y no pueden ejecutarse simultáneamente.",
+                    "current_modes": list(_current_modes),
+                })
+                return
 
         if name == "conv":
             model = find_model()
@@ -256,10 +301,10 @@ class MenuHandler(SimpleHTTPRequestHandler):
                 self._json({"error": "No se pudo iniciar Conversación"})
             return
 
-        # Teacher: necesita llama-server
+        # Teacher/Conversation: necesita llama-server
         model = find_model()
         if not model:
-            self._json({"error": "No se encontró modelo GGUF. Ejecuta setup.bat primero."})
+            self._json({"error": "No se encontró modelo GGUF"})
             return
 
         # Iniciar llama-server (blocking — espera hasta que el modelo cargue en GPU)

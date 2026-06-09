@@ -104,7 +104,13 @@ def find_model(force_q8=False):
     return None, None, 0
 
 def find_llama_exe():
-    """Busca llama-server en Linux o Windows."""
+    """Busca el mejor backend disponible: CUDA > Vulkan > CPU.
+    
+    Prioridad:
+      1. llama-server-cuda  (CUDA, más rápido)
+      2. llama-server-vulkan (Vulkan, bueno)
+      3. llama-server        (CPU, fallback)
+    """
     env_exe = os.environ.get("LLAMA_EXE")
     if env_exe and Path(env_exe).exists():
         return Path(env_exe)
@@ -112,22 +118,28 @@ def find_llama_exe():
     env_dir = os.environ.get("LLAMA_DIR")
     candidates = []
     if env_dir:
-        candidates.append(Path(env_dir) / ("llama-server.exe" if IS_WINDOWS else "llama-server"))
+        pd = Path(env_dir)
+        candidates.append(pd / ("llama-server-cuda.exe" if IS_WINDOWS else "llama-server-cuda"))
+        candidates.append(pd / ("llama-server-vulkan.exe" if IS_WINDOWS else "llama-server-vulkan"))
+        candidates.append(pd / ("llama-server.exe" if IS_WINDOWS else "llama-server"))
     
-    # Common paths
     llama_bin = PROJECT_ROOT / "llama-server-bin"
     if IS_WINDOWS:
         candidates.extend([
+            llama_bin / "llama-server-cuda.exe",
+            llama_bin / "llama-server-vulkan.exe",
             llama_bin / "llama-server.exe",
-            PROJECT_ROOT / "llama.cpp" / "llama-server.exe",
             DOCUMENTS_LLAMA_DIR / "llama-server.exe",
         ] if DOCUMENTS_LLAMA_DIR else [
+            llama_bin / "llama-server-cuda.exe",
+            llama_bin / "llama-server-vulkan.exe",
             llama_bin / "llama-server.exe",
-            PROJECT_ROOT / "llama.cpp" / "llama-server.exe",
         ])
     else:
         candidates.extend([
-            llama_bin / "llama-server",
+            llama_bin / "llama-server-cuda",   # Prioridad 1: CUDA
+            llama_bin / "llama-server-vulkan", # Prioridad 2: Vulkan
+            llama_bin / "llama-server",         # Prioridad 3: CPU
             PROJECT_ROOT / "llama.cpp" / "build" / "bin" / "llama-server",
         ])
 
@@ -135,6 +147,17 @@ def find_llama_exe():
         if candidate.exists():
             return candidate
     return None
+
+def get_backend_label(exe_path):
+    """Retorna etiqueta descriptiva del backend."""
+    if exe_path is None:
+        return "❌ No disponible"
+    name = exe_path.name.lower()
+    if "cuda" in name:
+        return "🎮 CUDA"
+    if "vulkan" in name:
+        return "⚡ Vulkan"
+    return "🖥️ CPU"
 
 def check_slots(host, port, timeout=2):
     """Verifica si llama-server responde. Retorna (True, n_slots) o (False, 0)."""
@@ -249,24 +272,32 @@ def start_llama_server(model_path, ctx_size):
         log(f"  ❌ Modelo no encontrado: {model_path}")
         return False
 
+    backend_label = get_backend_label(llama_exe)
+    
     # Flags optimizados para velocidad (benchmarks TTFT aplicados).
     args = [
         str(llama_exe),
         "-m", str(model_path),
         "--host", "0.0.0.0",
         "--port", str(LLAMA_PORT),
-        "-ngl", "99",
         "-c", str(ctx_size),
         "--chat-template", "chatml",
         "--no-warmup",
         "--reasoning-format", "none",
         "--no-ui",
     ]
-    log(f"  🚀 Iniciando llama-server...")
+    
+    # GPU layers: -ngl N (0 = CPU, 99 = max GPU, auto para Vulkan/CUDA)
+    if "cpu" in backend_label.lower():
+        args.extend(["-ngl", "0"])
+    else:
+        args.extend(["-ngl", "99"])
+    
+    log(f"  🚀 Iniciando {backend_label}...")
+    log(f"     Binario: {llama_exe.name}")
     log(f"     Modelo: {model_path.name}")
     log(f"     Contexto: {ctx_size} tokens")
-    log(f"     GPU: -ngl 99 (todas las capas)")
-    log(f"     Thinking: desactivado (chatml template)")
+    log(f"     GPU: {'-ngl 99 (todas las capas)' if 'cpu' not in backend_label.lower() else '-ngl 0 (CPU)'}")
 
     # Set LD_LIBRARY_PATH for llama-server to find libllama.so on Linux
     env = os.environ.copy()
@@ -274,7 +305,7 @@ def start_llama_server(model_path, ctx_size):
         llama_bin_dir = str(PROJECT_ROOT / "llama-server-bin")
         env["LD_LIBRARY_PATH"] = f"{llama_bin_dir}:" + env.get("LD_LIBRARY_PATH", "")
 
-    proc = start_process(args, "llama-server", hidden=IS_WINDOWS, env=env)
+    proc = start_process(args, f"llama-server ({backend_label})", hidden=IS_WINDOWS, env=env)
     if proc is None:
         return False
 
@@ -317,15 +348,17 @@ def open_browser(port):
 def print_banner(plan_name, port, model_label, ctx_size, plan_info=""):
     """Muestra el banner de inicio."""
     width = 55
+    llama_exe = find_llama_exe()
+    backend_label = get_backend_label(llama_exe)
     eprint()
     eprint("=" * width)
     eprint(f"  >> Alex Voice — {plan_name}")
     eprint(f"  {plan_info}" if plan_info else "")
     eprint(f"  Web UI:      http://localhost:{port}")
-
     eprint(f"  llama-server: {LLAMA_HOST}")
     eprint(f"  Modelo:      {model_label} ({ctx_size} ctx)")
-    eprint(f"  GPU VRAM:    ~{1.2 if 'Q4' in model_label else 3.0} GB de 5.28 GB")
+    eprint(f"  Backend:     {backend_label}")
+    eprint(f"  GPU VRAM:    ~{1.2 if 'Q4' in model_label else 3.0} GB de 5.79 GB")
     eprint(f"  TTS:         Kokoro-82M + Piper (CPU)")
     eprint(f"  ASR:         faster-whisper (CPU)")
     eprint("=" * width)
@@ -403,8 +436,11 @@ def main():
         input("  Presiona Enter para salir...")
         sys.exit(1)
 
+    llama_exe = find_llama_exe()
+    backend_label = get_backend_label(llama_exe)
     log(f"  📦 Modelo: {model_label}")
     log(f"  📐 Contexto: {ctx_size} tokens")
+    log(f"  ⚡ Backend: {backend_label}")
     log(f"  🎯 Plan: {plan_name} (puerto {port})")
 
     # 2. Iniciar llama-server

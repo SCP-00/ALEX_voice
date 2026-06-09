@@ -35,29 +35,56 @@ echo "============================================="
 echo ""
 
 # ═══════════════════════════════════════════════════════
-#  Helper: build llama-server from source (CUDA required)
+#  Helper: build llama-server from source (CUDA or Vulkan)
 # ═══════════════════════════════════════════════════════
 build_llama_from_source() {
-    if ! command -v nvcc &>/dev/null && ! command -v nvidia-smi &>/dev/null; then
-        warn "CUDA not found. llama-server build will use CPU only (slow!)"
-        CMAKE_CUDA_FLAG="-DLLAMA_CUDA=OFF"
-    else
-        CMAKE_CUDA_FLAG="-DLLAMA_CUDA=ON"
-        ok "CUDA detected for llama.cpp build"
-    fi
-
     if [ ! -d "llama.cpp" ]; then
         info "Cloning llama.cpp..."
         git clone --depth 1 https://github.com/ggml-org/llama.cpp.git
     fi
 
     cd llama.cpp
-    mkdir -p build && cd build
-    cmake .. $CMAKE_CUDA_FLAG -DCMAKE_BUILD_TYPE=Release
-    make -j$(nproc) llama-server
-    cp bin/llama-server "$ROOT/llama-server-bin/"
+    
+    # Try CUDA first
+    if command -v nvcc &>/dev/null; then
+        info "Building llama-server with CUDA..."
+        mkdir -p build-cuda && cd build-cuda
+        if cmake .. -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release 2>/dev/null; then
+            make -j$(nproc) llama-server && \
+            cp bin/llama-server "$ROOT/llama-server-bin/llama-server-cuda" && \
+            ok "llama-server-cuda built"
+        else
+            warn "CUDA build failed (incompatible glibc?), trying Vulkan..."
+        fi
+        cd ..
+    fi
+    
+    # Try Vulkan (works on all distros, no glibc issues)
+    command -v glslc &>/dev/null || sudo apt-get install -y glslc spirv-headers 2>/dev/null || true
+    if command -v glslc &>/dev/null; then
+        info "Building llama-server with Vulkan..."
+        mkdir -p build-vulkan && cd build-vulkan
+        cmake .. -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -3
+        make -j$(nproc) llama-server 2>&1 | tail -3
+        cp bin/llama-server "$ROOT/llama-server-bin/llama-server-vulkan"
+        # Copy Vulkan shared libraries to llama-server-bin
+        cp bin/libggml-vulkan.so* "$ROOT/llama-server-bin/" 2>/dev/null || true
+        cp bin/libggml*.so* "$ROOT/llama-server-bin/" 2>/dev/null || true
+        cp bin/libllama*.so* "$ROOT/llama-server-bin/" 2>/dev/null || true
+        ok "llama-server-vulkan built"
+        cd ..
+    fi
+    
+    # CPU fallback (always works)
+    info "Building llama-server CPU fallback..."
+    mkdir -p build-cpu && cd build-cpu
+    cmake .. -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -3
+    make -j$(nproc) llama-server 2>&1 | tail -3
+    cp bin/llama-server "$ROOT/llama-server-bin/llama-server"
+    ok "llama-server (CPU) built"
     cd "$ROOT"
-    ok "llama-server built from source"
+    
+    ok "llama-server builds complete (Vulkan > CPU). Check llama-server-bin/"
 }
 
 # ═══════════════════════════════════════════════════════
