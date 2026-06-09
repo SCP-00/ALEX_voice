@@ -91,7 +91,7 @@ O crear `.bat` files en `%USERPROFILE%\Desktop\Voice_chat\`:
 **alex-voice-home.bat:**
 ```batch
 @echo off
-cd /d "C:\Users\%USERNAME%\Alex_Voice"
+cd /d "%~dp0"
 start "" http://localhost:5000
 python menu_server.py
 pause
@@ -100,7 +100,7 @@ pause
 **alex-voice-teacher.bat:**
 ```batch
 @echo off
-cd /d "C:\Users\%USERNAME%\Alex_Voice"
+cd /d "%~dp0"
 python server.py --port 3000 --mode teacher
 pause
 ```
@@ -108,7 +108,7 @@ pause
 **alex-voice-chat.bat:**
 ```batch
 @echo off
-cd /d "C:\Users\%USERNAME%\Alex_Voice"
+cd /d "%~dp0"
 python conv_server.py
 pause
 ```
@@ -116,7 +116,7 @@ pause
 **alex-voice-translate.bat:**
 ```batch
 @echo off
-cd /d "C:\Users\%USERNAME%\Alex_Voice"
+cd /d "%~dp0"
 python translator.py
 pause
 ```

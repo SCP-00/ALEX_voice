@@ -151,7 +151,7 @@ Charla natural para practicar idiomas con **memoria completa** (~20 mensajes de 
 Traducción profesional con audio de alta calidad. **Puede ejecutarse en paralelo** con Teacher/Conversation.
 - **STT:** faster-whisper large-v3-turbo (GPU) — ASR multilingüe de alta precisión
 - **TRANS:** argos-translate (CPU) — traducción offline EN/ES/JA
-- **TTS:** Kokoro-82M (CPU) — audio natural. **Speed slider**: 0.7x–1.3x velocidad configurable
+- **TTS:** Kokoro-82M (CPU, default) + **Qwen3-TTS 0.6B** (GPU, fallback no-latino). Speed slider solo para Kokoro (0.7x–1.3x); Qwen3-TTS usa instruct parameters.
 - **Sliders simplificados:** solo velocidad (se eliminaron Calma/Calidez que requerían Qwen3-TTS)
 - Selector manual de idiomas FROM/TO
 - Sin LLM — servicio ligero y especializado
@@ -282,7 +282,6 @@ Alex_Voice/
 │
 ├── llama-server-bin/            ← llama-server (según SO)
 │
-├── AGENT.md                     ← Instrucciones del sistema (Linux)
 ├── AGENT_WINDOWS.md             ← Instrucciones del sistema (Windows) 🆕
 ├── knowledge.md                 ← Knowledge base
 ├── plan.md                      ← Plan de mejora
