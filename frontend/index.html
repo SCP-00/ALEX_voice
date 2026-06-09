@@ -71,6 +71,13 @@ textarea:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--glow)}
 .web-search-info{font-size:9px;color:var(--accent);margin-top:2px;display:none}
 .web-search-info.show{display:block}
 
+/* ── Tool Calling indicator ── */
+.tool-badge{font-size:9px;color:var(--success);background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.3);padding:2px 7px;border-radius:4px;display:inline-flex;align-items:center;gap:3px;margin-top:4px}
+.search-status{font-size:10px;color:var(--warn);margin:2px 0 4px;padding:3px 8px;background:rgba(245,158,11,.08);border-radius:4px;display:none;align-items:center;gap:4px}
+.search-status.show{display:flex}
+.search-status .spin{display:inline-block;animation:spin 1s linear infinite}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+
 /* ── Voice ── */
 #asrTranscript{font-size:10px;color:var(--textDim);margin-top:4px;min-height:16px}
 .asr-tooltip{font-size:9px;color:var(--warn);margin-top:2px}
@@ -115,6 +122,7 @@ textarea:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--glow)}
 <div class="msg assistant">⚡ Alex Voice activo: LLM local (GPU) + Kokoro-82M + Piper (fallback)<div class="ts">Alex Voice · Local</div></div>
 </div>
 <div class="think-indicator" id="think"><span></span><span></span><span></span></div>
+<div class="search-status" id="searchStatus"><span class="spin">🔍</span> Buscando en la web...</div>
 
 <div class="input-area">
 <div class="input-row">            <button class="action-btn" id="micBtn" onclick="toggleMic()" title="Grabar voz (ASR)">🎤</button>
@@ -269,6 +277,14 @@ function addMsg(role, text, extra) {
     d.appendChild(cb);
   }
   
+  // Tool calling badge
+  if (extra && extra.toolCalls && extra.toolCalls > 0) {
+    const tb = document.createElement('span');
+    tb.className = 'tool-badge';
+    tb.innerHTML = '🔍 <span>Web Search</span>';
+    d.appendChild(tb);
+  }
+  
   // Timestamp
   const t = document.createElement('div');
   t.className = 'ts';
@@ -326,6 +342,12 @@ async function send() {
   setThinking(true);
   setStatus('🧠 Pensando...');
   
+  // Show web search indicator if enabled
+  const searchStatusEl = document.getElementById('searchStatus');
+  if (webSearchEnabled) {
+    searchStatusEl.classList.add('show');
+  }
+  
   try {
     // Build messages array - use mode parameter instead of raw system prompt
     const userMsg = { role: 'user', content: text };
@@ -350,8 +372,9 @@ async function send() {
     const isCached = data.cached === true;
     const parsed = data.parsed || {};
     const mode = data.mode || currentMode;
+    const toolCallsUsed = data.tool_calls_used || 0;
     
-    addMsg('assistant', content, { cached: isCached, parsed: parsed, mode: mode });
+    addMsg('assistant', content, { cached: isCached, parsed: parsed, mode: mode, toolCalls: toolCallsUsed });
     messageHistory.push(userMsg, { role: 'assistant', content });
     if (messageHistory.length > 20) messageHistory = messageHistory.slice(-20);
     
@@ -366,6 +389,9 @@ async function send() {
     addMsg('assistant', '⚠️ Error: ' + e.message);
     setStatus('❌ Error');
   }
+  
+  // Hide web search indicator
+  searchStatusEl.classList.remove('show');
   
   isProcessing = false;
   setThinking(false);
