@@ -329,6 +329,28 @@ class PiperTTS:
         self.en_voice = None
         self.available = False
 
+# ── Tool Definitions (for Qwen3.5-2B function calling) ──
+# Format compatible with OpenAI API / llama-server chat/completions
+TOOLS_DEFINITIONS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "Search the internet for current information. Use this when you need up-to-date information about recent events, news, weather, or any topic that might be beyond your knowledge cutoff.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query (e.g., 'latest news 2026', 'weather Barcelona')"
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    }
+]
+
 # ── Web Search (DuckDuckGo) ──────────────────────────────
 HAVE_WEB = False
 _web_search_lock = threading.Lock()
@@ -730,32 +752,28 @@ class Handler(SimpleHTTPRequestHandler):
                             msg["content"] = f"{msg.get('content', '')}\n[Target language: {target_lang}]"
                             break
                 
-                # ── Web Search: buscar en web SI el usuario activó el toggle ──
-                web_results = None
-                if data.get("web_search") and mode == 'conversation':
-                    # Buscar los últimos mensajes del usuario para formular query
-                    for msg in reversed(messages):
-                        if msg.get("role") == "user":
-                            query = msg.get('content', '')[:200]
-                            web_results = web_search(query)
-                            break
-                    if web_results:
-                        # Inyectar resultados web en el último mensaje del usuario
-                        for msg in reversed(messages):
-                            if msg.get("role") == "user":
-                                msg["content"] = msg["content"] + web_results
-                                break
-                        # Aumentar n_predict para dar espacio a la respuesta con contexto web
-                        data["n_predict"] = max(data.get("n_predict", 512), 1024)
-                
-                chat_data = {
-                    "messages": messages,
-                    "n_predict": data.get("n_predict", 512),
-                    "temperature": data.get("temperature", {
-                        'teacher': 0.5, 'conversation': 0.7
-                    }.get(mode, 0.7)),
-                    "stream": data.get("stream", False),
-                }
+                # ── Tool Calling: web_search via Qwen3.5 function calling ──
+                use_tools = data.get("web_search") and mode == 'conversation' and HAVE_WEB
+                if use_tools:
+                    # Añadir definiciones de herramientas a la request
+                    chat_data = {
+                        "messages": messages,
+                        "n_predict": data.get("n_predict", 512),
+                        "temperature": data.get("temperature", {
+                            'teacher': 0.5, 'conversation': 0.7
+                        }.get(mode, 0.7)),
+                        "stream": data.get("stream", False),
+                        "tools": TOOLS_DEFINITIONS,
+                    }
+                else:
+                    chat_data = {
+                        "messages": messages,
+                        "n_predict": data.get("n_predict", 512),
+                        "temperature": data.get("temperature", {
+                            'teacher': 0.5, 'conversation': 0.7
+                        }.get(mode, 0.7)),
+                        "stream": data.get("stream", False),
+                    }
                 
             else:
                 # Build messages with proper system prompt from translator module
@@ -776,8 +794,8 @@ class Handler(SimpleHTTPRequestHandler):
                     "stream": data.get("stream", False),
                 }
 
-            # Cache check (non-streaming only)
-            if not chat_data.get("stream"):
+            # Cache check (skip when tools active — tool results differ per request)
+            if not chat_data.get("stream") and not chat_data.get("tools"):
                 cached = _response_cache.get(chat_data.get("messages", []))
                 if cached:
                     log_info(f"Cache HIT! {len(cached)} chars")
@@ -795,6 +813,10 @@ class Handler(SimpleHTTPRequestHandler):
                 data=json.dumps(chat_data).encode(),
                 headers={"Content-Type": "application/json"},
             )
+
+            # Force non-streaming when tools active (tool calls need multi-round handshake)
+            if chat_data.get("tools"):
+                chat_data["stream"] = False
 
             if chat_data.get("stream"):
                 with urllib.request.urlopen(req, timeout=120) as resp:
@@ -830,29 +852,114 @@ class Handler(SimpleHTTPRequestHandler):
                                 self.wfile.write(line + b'\n')
                                 self.wfile.flush()
                             except Exception:
-                                break
+                                    break
             else:
-                with urllib.request.urlopen(req, timeout=120) as resp:
-                    result = json.loads(resp.read().decode())
-                content = ""
-                choices = result.get("choices", [])
-                if choices:
-                    content = choices[0].get("message", {}).get("content", "")
+                # ── Tool Calling Loop ──
+                # If tools were provided, check if the model wants to call a tool.
+                # If so, execute it and send the result back to get the final response.
+                max_tool_rounds = 3  # Safety limit to prevent infinite loops
+                tool_round = 0
+                current_messages = list(chat_data.get("messages", []))
+                current_tools = chat_data.get("tools")
+                
+                while tool_round < max_tool_rounds:
+                    # Build the request
+                    # Tool response rounds need more tokens to synthesize search results
+                    current_n_predict = max(data.get("n_predict", 1024), 1024) if tool_round > 0 else max(data.get("n_predict", 512), 1024)
+                    payload = {
+                        "messages": current_messages,
+                        "n_predict": current_n_predict,
+                        "temperature": chat_data.get("temperature", 0.7),
+                        "stream": False,
+                    }
+                    if current_tools:
+                        payload["tools"] = current_tools
+                    
+                    req = urllib.request.Request(
+                        f"{LLAMA_HOST}/chat/completions",
+                        data=json.dumps(payload).encode(),
+                        headers={"Content-Type": "application/json"},
+                    )
+                    
+                    with urllib.request.urlopen(req, timeout=120) as resp:
+                        result = json.loads(resp.read().decode())
+                    
+                    choices = result.get("choices", [])
+                    if not choices:
+                        break
+                    
+                    message = choices[0].get("message", {})
+                    finish_reason = choices[0].get("finish_reason", "")
+                    tool_calls = message.get("tool_calls", [])
+                    
+                    # If no tool calls, we're done
+                    if not tool_calls or finish_reason != "tool_calls":
+                        break
+                    
+                    # Add the assistant's tool-call message to history
+                    current_messages.append({
+                        "role": "assistant",
+                        "content": message.get("content", ""),
+                        "tool_calls": tool_calls,
+                    })
+                    
+                    # Execute each tool call
+                    tool_round += 1
+                    for tc in tool_calls:
+                        func_name = tc.get("function", {}).get("name", "")
+                        func_args_str = tc.get("function", {}).get("arguments", "{}")
+                        tool_call_id = tc.get("id", f"call_{tool_round}_{int(time.time())}")
+                        
+                        if func_name == "web_search":
+                            try:
+                                func_args = json.loads(func_args_str)
+                                query = func_args.get("query", "")
+                                log_info(f"🔍 Tool call: web_search(query={query[:80]}...)")
+                                search_results = web_search(query)
+                                tool_result = search_results if search_results else "No se encontraron resultados para esa búsqueda."
+                                log_info(f"📦 Tool result: {len(tool_result)} chars")
+                            except Exception as e:
+                                tool_result = f"Error executing web_search: {e}"
+                                log_err(f"Tool exec error: {e}")
+                        else:
+                            tool_result = f"Unknown function: {func_name}"
+                            log_warn(f"Unknown tool: {func_name}")
+                        
+                        # Add tool result to messages
+                        current_messages.append({
+                            "role": "tool",
+                            "content": tool_result,
+                            "tool_call_id": tool_call_id,
+                        })
+                    
+                    # Remove tools after first round to get a text response
+                    current_tools = None
+                
+                # If we did tool rounds, use the result from the last iteration
+                if tool_round > 0:
+                    # Use the result from the final non-tool response
+                    content = message.get("content", "") if choices else ""
+                else:
+                    content = choices[0].get("message", {}).get("content", "") if choices else ""
+                
                 # Strip thinking tags
                 cleaned = re.sub(r'<think>[\s\S]*?</think>\s*', '', content).strip()
                 if not cleaned:
                     cleaned = content
                 # Parse multi-output for teacher mode
                 parsed = parse_multi_output(cleaned) if mode == 'teacher' else {}
-                if choices:
-                    choices[0]["message"]["content"] = cleaned
-                # Add parsed output to result
+                # Build final result
+                final_result = {
+                    "choices": [{"message": {"content": cleaned}}],
+                    "usage": result.get("usage", {}),
+                    "mode": mode,
+                    "tool_calls_used": tool_round,
+                }
                 if parsed:
-                    result['parsed'] = parsed
-                result['mode'] = mode
+                    final_result['parsed'] = parsed
                 if cleaned and len(cleaned) > 20:
                     _response_cache.put(chat_data.get("messages", []), cleaned)
-                self._json_response(result)
+                self._json_response(final_result)
 
         except urllib.error.HTTPError as e:
             err = e.read().decode(errors='replace')[:500]
@@ -1157,6 +1264,8 @@ def main():
     log_info(f"  ASR:          Whisper small (GPU, ~1.5 GB VRAM)")
     web_str = "✅ DuckDuckGo" if HAVE_WEB else "❌ No disponible"
     log_info(f"  Web Search:   {web_str}")
+    tool_str = "✅ Qwen3.5-2B (web_search)" if HAVE_WEB else "❌ No disponible"
+    log_info(f"  Tool Calling: {tool_str}")
     log_info(f"{'='*50}\n")
 
     if HAVE_FASTER_WHISPER:
