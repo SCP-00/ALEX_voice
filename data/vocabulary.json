@@ -1,0 +1,18 @@
+{
+  "en": {
+    "Konnichiwa": {
+      "word": "Konnichiwa",
+      "reading": "Kohn-nee-chee-wah",
+      "translation": "Hello",
+      "language": "en",
+      "first_seen": "2026-06-09T03:03:01.490660+00:00",
+      "last_seen": "2026-06-09T03:03:01.491050+00:00",
+      "last_reviewed": "2026-06-09T03:03:01.490965+00:00",
+      "next_review": "2026-06-10T03:03:01.490967+00:00",
+      "interval_days": 1,
+      "ease_factor": 1.92,
+      "repetitions": 1,
+      "source_conversations": []
+    }
+  }
+}

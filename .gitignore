@@ -25,6 +25,13 @@ Thumbs.db
 # llama-server binaries (download with setup.sh)
 llama-server-bin/
 
+# CUDA installer files (large, not for repo)
+cuda_*.run
+cuda_*.run.*
+
+# llama.cpp (has its own git repo)
+llama.cpp/
+
 # Environment
 .env
 *.env.local

@@ -357,6 +357,55 @@ def detect_language(text):
         return 'es'
     return 'en'
 
+# ── Estado de carga ──
+_loading_status = {
+    "whisper": "cargando",
+    "argos": "pendiente",
+    "kokoro": "pendiente",
+    "qwen3": "pendiente",
+    "ready": False,
+}
+_loading_lock = threading.Lock()
+
+def _update_loading(key, status):
+    with _loading_lock:
+        _loading_status[key] = status
+        # Ready si whisper y argos están listos (kokoro es opcional, qwen3 bajo demanda)
+        required = ("whisper", "argos")
+        _loading_status["ready"] = all(
+            _loading_status.get(k) == "listo" for k in required
+        )
+
+def _background_load():
+    """Carga modelos en background después de iniciar HTTP."""
+    try:
+        # 1. Whisper
+        _update_loading("whisper", "cargando")
+        t0 = time.time()
+        if HAVE_WHISPER:
+            _get_asr("large-v3-turbo")
+            log_ok(f"Whisper: {time.time()-t0:.1f}s")
+        _update_loading("whisper", "listo" if HAVE_WHISPER else "no disponible")
+        
+        # 2. argos
+        _update_loading("argos", "cargando")
+        if _install_core_pairs():
+            log_ok("argos EN↔ES↔JA listo")
+            _update_loading("argos", "listo")
+        else:
+            log_warn("argos incompleto — carga bajo demanda")
+            _update_loading("argos", "parcial")
+        
+        # 3. Kokoro (lazy, solo marcar)
+        _update_loading("kokoro", "listo" if HAVE_KOKORO else "no disponible")
+        
+        log_info("Qwen3-TTS: carga bajo demanda (solo para JA/no-Latin)")
+        _update_loading("qwen3", "bajo demanda")
+        
+        log_ok("Modelos listos")
+    except Exception as e:
+        log_err(f"Error cargando modelos: {e}")
+
 # ── HTTP Handler ──
 class TranslatorHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
@@ -378,6 +427,9 @@ class TranslatorHandler(SimpleHTTPRequestHandler):
                 "whisper_loaded": HAVE_WHISPER,
                 "languages": list(LANG_MAP.keys()),
             })
+        elif self.path == "/api/loading-status":
+            with _loading_lock:
+                self._json(dict(_loading_status))
         elif self.path in ("/", "/index.html"):
             self.path = "/translator.html"
             super().do_GET()
@@ -543,28 +595,14 @@ def main():
     log_info(f"  TTS:    Kokoro-82M (CPU, ~85ms) + Qwen3 fallback (GPU)")
     log_info(f"{'='*50}")
 
-    # 1. Cargar Whisper large-v3-turbo en GPU (siempre)
-    t0 = time.time()
-    log_info("Cargando Whisper large-v3-turbo...")
-    if HAVE_WHISPER:
-        _get_asr("large-v3-turbo")
-        log_ok(f"Whisper: {time.time()-t0:.1f}s")
-
-    # 2. Cargar argos
-    if _install_core_pairs():
-        log_ok("argos EN↔ES↔JA listo")
-    else:
-        log_warn("argos incompleto — carga bajo demanda")
-
-    # 3. Qwen3-TTS NO se precarga — se carga bajo demanda solo para JA.
-    log_info("Qwen3-TTS: carga bajo demanda (solo para JA/no-Latin)")
-
-    # 4. Kokoro se carga bajo demanda (lazy-load en primera request)
-
-    # Iniciar servidor
+    # Iniciar servidor HTTP INMEDIATAMENTE (antes de cargar modelos)
     httpd = HTTPServer(("0.0.0.0", PORT), TranslatorHandler)
-    log_ok(f"Servidor en http://localhost:{PORT}")
-    log_info("Pipeline esperado ~5.5s para EN↔ES, ~13s para JA (incluye Qwen3)")
+    log_ok(f"Servidor HTTP en http://localhost:{PORT}")
+    log_info("Cargando modelos en background...")
+    
+    # Cargar modelos en background
+    t = threading.Thread(target=_background_load, daemon=True)
+    t.start()
 
     try:
         httpd.serve_forever()

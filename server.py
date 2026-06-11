@@ -32,6 +32,10 @@ _TTS_SAFE_RE = re.compile(
 # ── Shared prompts module ─────────────────────────────────
 from prompts import parse_multi_output, get_tts_text, get_system_prompt, build_llm_messages, detect_language_simple
 
+# ── History module ─────────────────────────────────────────
+import history as history_mod
+# Renamed to avoid conflict with 'history' variable names
+
 # ── LRU Cache ──────────────────────────────────────────────
 class ResponseCache:
     """LRU cache thread-safe para respuestas del LLM."""
@@ -89,8 +93,8 @@ class ResponseCache:
 # ── Config ─────────────────────────────────────────────────
 LLAMA_HOST = os.environ.get("LLAMA_HOST", "http://localhost:8081")
 
-# Soporte para --mode y --port desde línea de comandos (conv_server.py wrapper)
-SERVER_MODE = os.environ.get("CONV_MODE", "")
+# Soporte para --mode y --port desde línea de comandos (teacher/conv wrapper)
+SERVER_MODE = os.environ.get("TEACHER_MODE", "") or os.environ.get("CONV_MODE", "")
 PORT = int(os.environ.get("PLAN_B_PORT", "3000"))
 for i, arg in enumerate(sys.argv):
     if arg == "--port" and i + 1 < len(sys.argv):
@@ -155,6 +159,85 @@ def _sanitize_tts_text(text):
     safe = re.sub(r"\s+", " ", safe).strip()
     return safe
 
+
+def _parse_conversation_correction(response: str) -> tuple:
+    """Parse the 📝 correction section from a conversation response.
+    
+    The model adds corrections in this format at the end of its response:
+    📝 "user's phrase" → "corrected phrase" (brief explanation)
+    
+    Returns (main_text, correction_text).
+    If no correction found, correction_text is empty string.
+    """
+    if not response or '📝' not in response:
+        return response.strip(), ''
+    
+    # Find the 📝 marker and split
+    parts = response.split('📝', 1)
+    main_text = parts[0].strip()
+    correction_text = '📝' + parts[1].strip() if len(parts) > 1 else ''
+    
+    return main_text, correction_text
+
+
+def _validate_teacher_response(parsed: dict) -> list:
+    """Verifica que los campos esenciales del Teacher estén presentes.
+    
+    Campos requeridos: text, tts_reading, pronunciation, translation
+    Retorna lista de nombres de campos faltantes (vacía si todo ok).
+    """
+    required = ['text', 'tts_reading', 'pronunciation', 'translation']
+    missing = [f for f in required if not parsed.get(f, '').strip()]
+    return missing
+
+
+def _call_llama(messages: list, n_predict: int = 512, temperature: float = 0.5) -> str:
+    """Simplified call to llama-server, returns content string.
+    
+    Used for teacher retry loop. Always non-streaming, no tools.
+    Returns empty string on failure.
+    """
+    payload = {
+        "messages": messages,
+        "n_predict": n_predict,
+        "temperature": temperature,
+        "stream": False,
+    }
+    try:
+        req = urllib.request.Request(
+            f"{LLAMA_HOST}/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            result = json.loads(resp.read().decode())
+        choices = result.get("choices", [])
+        if not choices:
+            return ''
+        return choices[0].get("message", {}).get("content", '')
+    except Exception as e:
+        log_err(f"Teacher retry LLM call failed: {e}")
+        return ''
+
+
+def _force_latin_text(text: str) -> str:
+    """Elimina TODO carácter no-Latin del texto, dejando solo ASCII + español.
+    
+    Más agresivo que _sanitize_tts_text — garantiza que Kokoro/Piper
+    puedan pronunciar el resultado. Elimina CJK, árabe, cirílico, etc.
+    """
+    if not text:
+        return ''
+    # Permitir: ASCII imprimible + español extendido + puntuación común
+    latin_re = re.compile(
+        r'[^\x20-\x7E\u00C0-\u024F\u00D1\u00F1'  # ASCII printable + Latin ext + Ññ
+        r'\u00A1\u00BF\u00E1-\u00FA'                 # ¡ ¿ + vocales acentuadas
+        r'\u0300-\u036F'                               # combining diacritics
+        r'\s.,!?;:\'\"\(\)\[\]\{\}\-–—…&@#%*+=/<>~`$€£¥°]'
+    )
+    safe = latin_re.sub(' ', text)
+    safe = re.sub(r'\s+', ' ', safe).strip()
+    return safe
 
 # ── Kokoro-82M TTS ─────────────────────────────────────────
 HAVE_KOKORO = False
@@ -684,10 +767,43 @@ class Handler(SimpleHTTPRequestHandler):
         elif self.path == "/api/cache/clear":
             _response_cache.invalidate()
             self._json_response({"ok": True})
+        elif self.path == "/api/history/list":
+            limit = int(self._get_qs_param('limit', '50'))
+            self._json_response({'conversations': history_mod.list_conversations(limit)})
+        elif self.path.startswith("/api/history/get"):
+            conv_id = self._get_qs_param('id', '')
+            if not conv_id:
+                self._json_response({'error': 'Missing id param'})
+                return
+            conv = history_mod.load_conversation(conv_id)
+            if conv:
+                self._json_response(conv)
+            else:
+                self._json_response({'error': 'Not found'})
+        elif self.path == "/api/vocabulary":
+            self._json_response(history_mod.get_all_vocabulary())
+        elif self.path == "/api/vocabulary/stats":
+            self._json_response(history_mod.get_vocabulary_stats())
+        elif self.path == "/api/vocabulary/due":
+            limit = int(self._get_qs_param('limit', '20'))
+            self._json_response({'words': history_mod.get_due_vocabulary(limit)})
         elif self.path in ("/", "/index.html"):
             self._serve_file("index.html")
         else:
             super().do_GET()
+
+    def _get_qs_param(self, name, default=''):
+        """Extract a query string parameter from self.path."""
+        if '?' not in self.path:
+            return default
+        qs = self.path.split('?', 1)[1]
+        for part in qs.split('&'):
+            if '=' in part:
+                k, v = part.split('=', 1)
+                if k == name:
+                    from urllib.parse import unquote
+                    return unquote(v)
+        return default
 
     def do_OPTIONS(self):
         self.send_response(200)
@@ -709,6 +825,24 @@ class Handler(SimpleHTTPRequestHandler):
             self._handle_asr(body)
         elif self.path == "/api/web_search":
             self._handle_web_search(body)
+        elif self.path == "/api/history/delete":
+            data = json.loads(body) if length > 0 else {}
+            ok = history_mod.delete_conversation(data.get('id', ''))
+            self._json_response({'ok': ok})
+        elif self.path == "/api/history/clear":
+            count = history_mod.clear_all_history()
+            self._json_response({'ok': True, 'deleted': count})
+        elif self.path == "/api/vocabulary/delete":
+            data = json.loads(body) if length > 0 else {}
+            ok = history_mod.delete_vocabulary_word(data.get('word', ''), data.get('language', ''))
+            self._json_response({'ok': ok})
+        elif self.path == "/api/vocabulary/clear":
+            count = history_mod.clear_all_vocabulary()
+            self._json_response({'ok': True, 'deleted': count})
+        elif self.path == "/api/vocabulary/review":
+            data = json.loads(body) if length > 0 else {}
+            entry = history_mod.review_word(data.get('word', ''), data.get('language', ''), data.get('quality', 3))
+            self._json_response(entry)
         else:
             self.send_response(404)
             self.end_headers()
@@ -799,11 +933,18 @@ class Handler(SimpleHTTPRequestHandler):
                 cached = _response_cache.get(chat_data.get("messages", []))
                 if cached:
                     log_info(f"Cache HIT! {len(cached)} chars")
+                    # Parse correction section if conversation mode
+                    cached_main = cached
+                    cached_correction = ''
+                    if mode == 'conversation':
+                        cached_main, cached_correction = _parse_conversation_correction(cached)
                     result = {
-                        "choices": [{"message": {"content": cached}}],
+                        "choices": [{"message": {"content": cached_main}}],
                         "usage": {"completion_tokens": 0, "prompt_tokens": 0},
                         "cached": True,
                     }
+                    if cached_correction:
+                        result['correction'] = cached_correction
                     self._json_response(result)
                     return
 
@@ -948,17 +1089,97 @@ class Handler(SimpleHTTPRequestHandler):
                     cleaned = content
                 # Parse multi-output for teacher mode
                 parsed = parse_multi_output(cleaned) if mode == 'teacher' else {}
+                # Parse correction section for conversation mode
+                correction = ''
+                if mode == 'conversation':
+                    cleaned, correction = _parse_conversation_correction(cleaned)
+                
+                # ── Teacher retry loop: validate required fields ──
+                teacher_retries = 0
+                if mode == 'teacher':
+                    while teacher_retries < 2:
+                        parsed = parse_multi_output(cleaned)
+                        missing = _validate_teacher_response(parsed)
+                        if not missing:
+                            break
+                        teacher_retries += 1
+                        log_warn(f"Teacher retry {teacher_retries}: missing fields {missing}")
+                        # Append retry instruction to messages
+                        retry_text = (
+                            f"Your previous response was missing these required fields: {', '.join(missing)}.\n"
+                            f"Please respond again using ALL required fields.\n"
+                            f"Format:\n"
+                            f"【TEXT】...\n"
+                            f"【TTS_READING】... (LATIN SCRIPT ONLY!)\n"
+                            f"【PRONUNCIATION】...\n"
+                            f"【TRANSLATION】...\n"
+                            f"【EXPLANATION】...\n"
+                            f"【EXERCISE】..."
+                        )
+                        # The last user message is the original request
+                        retry_messages = list(chat_data.get("messages", []))
+                        # Add the model's incomplete response for context
+                        retry_messages.append({"role": "assistant", "content": cleaned})
+                        retry_messages.append({"role": "user", "content": retry_text})
+                        
+                        new_content = _call_llama(retry_messages, n_predict=512, temperature=0.6)
+                        if not new_content:
+                            log_err("Teacher retry: LLM returned empty, using original response")
+                            break
+                        cleaned = re.sub(r'<think>[\s\S]*?</think>\s*', '', new_content).strip()
+                        if not cleaned:
+                            cleaned = new_content
+                    
+                    # After retries, re-parse one final time
+                    parsed = parse_multi_output(cleaned)
+                    # Log result
+                    if teacher_retries > 0:
+                        log_info(f"Teacher: {teacher_retries} retries used, fields: {list(parsed.keys())}")
+                
                 # Build final result
                 final_result = {
                     "choices": [{"message": {"content": cleaned}}],
                     "usage": result.get("usage", {}),
                     "mode": mode,
                     "tool_calls_used": tool_round,
+                    "retries": teacher_retries if mode == 'teacher' else 0,
                 }
                 if parsed:
                     final_result['parsed'] = parsed
-                if cleaned and len(cleaned) > 20:
-                    _response_cache.put(chat_data.get("messages", []), cleaned)
+                if correction:
+                    final_result['correction'] = correction
+
+                # ── Auto-save to history ──
+                conv_id = data.get('conv_id', '')
+                user_text = data.get('text', '')
+                # Find the last user message from messages
+                if not user_text and 'messages' in data:
+                    for msg in reversed(data['messages']):
+                        if msg.get('role') == 'user':
+                            user_text = msg.get('content', '')
+                            break
+                if user_text and cleaned and len(cleaned) > 10:
+                    try:
+                        new_id = history_mod.auto_save_exchange(
+                            conv_id=conv_id,
+                            mode=mode,
+                            user_message=user_text,
+                            assistant_message=cleaned,
+                            parsed=parsed if mode == 'teacher' else None,
+                        )
+                        if new_id:
+                            final_result['conv_id'] = new_id
+                    except Exception as e:
+                        log_err(f"History save failed: {e}")
+
+                # Cache: conversation mode preserves 📝 section for re-parsing
+                #         teacher mode uses post-retry cleaned response
+                if mode == 'conversation':
+                    cache_content = content.strip()  # Preserve 📝 for re-parse on cache hit
+                else:
+                    cache_content = cleaned.strip()  # Use post-retry version
+                if cache_content and len(cache_content) > 20:
+                    _response_cache.put(chat_data.get("messages", []), cache_content)
                 self._json_response(final_result)
 
         except urllib.error.HTTPError as e:
@@ -976,6 +1197,10 @@ class Handler(SimpleHTTPRequestHandler):
         1. Kokoro: mejor calidad, streaming real (~2.5x EN, 1.0x ES)
         2. Piper: ~45ms, siempre disponible como respaldo
         3. subprocess Piper: último recurso
+        
+        Siempre aplica _force_latin_text() para garantizar que Kokoro/Piper
+        reciban solo caracteres pronunciables. Si tras sanitizar no queda
+        texto útil, retorna silenciosamente en vez de error.
         """
         global _piper_tts
         t0 = time.time()
@@ -992,10 +1217,11 @@ class Handler(SimpleHTTPRequestHandler):
                 self._json_response({"error": "texto vacio"})
                 return
 
-            # Sanitizar: eliminar caracteres no pronunciables (CJK, etc.)
-            text = _sanitize_tts_text(text)
+            # Forzar Latin: eliminar CJK, árabe, cirílico, etc.
+            text = _force_latin_text(text)
             if not text or len(text) < 2:
-                self._json_response({"error": "Texto sin caracteres pronunciables"})
+                log_warn(f"TTS: texto sin caracteres Latin tras sanitizar, saltando")
+                self._json_response({"ok": False, "reason": "latin_empty", "error": "Texto sin caracteres Latin pronunciables"})
                 return
 
             # Determinar idioma
@@ -1086,6 +1312,9 @@ class Handler(SimpleHTTPRequestHandler):
         Kokoro genera audio chunk por chunk (cada segmento de texto).
         Cada chunk se envía al cliente en cuanto está listo.
         Si Kokoro no está disponible, cae en Piper streaming.
+        
+        Siempre aplica _force_latin_text() para garantizar que Kokoro/Piper
+        reciban solo caracteres pronunciables.
         """
         global _piper_tts
         t0 = time.time()
@@ -1098,10 +1327,11 @@ class Handler(SimpleHTTPRequestHandler):
             if not text:
                 self._json_response({"error": "texto vacio"})
                 return
-            # Sanitizar: eliminar caracteres no pronunciables (CJK, etc.)
-            text = _sanitize_tts_text(text)
+            # Forzar Latin: eliminar CJK, árabe, cirílico, etc.
+            text = _force_latin_text(text)
             if not text or len(text) < 2:
-                self._json_response({"error": "Texto sin caracteres pronunciables"})
+                log_warn(f"TTS-stream: texto sin caracteres Latin tras sanitizar, saltando")
+                self._json_response({"ok": False, "reason": "latin_empty", "error": "Texto sin caracteres Latin pronunciables"})
                 return
 
             if lang not in ('es', 'en'):

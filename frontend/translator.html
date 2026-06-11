@@ -859,16 +859,53 @@ document.addEventListener('keydown', function(e) {
   }
 });
 
-// ── Volver al menu principal ──
+// ── Volver al menu principal (detiene todo) ──
 function goToMenu() {
-  fetch('http://localhost:5000/api/stop', { method: 'POST' }).catch(() => {});
-  window.location.href = 'http://localhost:5000';
+  document.getElementById('footerStatus').textContent = '⏹ Deteniendo...';
+  let redirected = false;
+  const redirect = () => {
+    if (!redirected) { redirected = true; window.location.href = 'http://localhost:5000'; }
+  };
+  fetch('http://localhost:5000/api/stop', { method: 'POST' })
+    .catch(() => {})
+    .finally(redirect);
+  setTimeout(redirect, 1500);
+}
+
+// ── Loading status polling ──
+async function pollTranslatorLoading() {
+  try {
+    const r = await fetch(API + '/api/loading-status');
+    const s = await r.json();
+    if (s.ready) {
+      document.getElementById('statusBadge').textContent = '✅ Listo';
+      document.getElementById('footerStatus').textContent = '✅ Listo';
+      document.getElementById('footerStatus').className = 'status';
+      return true;
+    }
+    if (s.whisper === 'cargando') {
+      document.getElementById('statusBadge').textContent = '⏳ Cargando Whisper...';
+      document.getElementById('footerStatus').textContent = '⏳ Inicializando ASR...';
+      document.getElementById('footerStatus').className = 'status busy';
+    } else if (s.argos === 'cargando') {
+      document.getElementById('statusBadge').textContent = '⏳ Cargando argos...';
+      document.getElementById('footerStatus').textContent = '⏳ Inicializando traductor...';
+      document.getElementById('footerStatus').className = 'status busy';
+    }
+    return false;
+  } catch(e) {
+    return false;
+  }
 }
 
 // Initialize
 setStatus('✅ Iniciando...', true);
 updateConvLabels();
-preloadModel();
+// Poll loading status until ready
+const loadInterval = setInterval(async () => {
+  const ready = await pollTranslatorLoading();
+  if (ready) clearInterval(loadInterval);
+}, 2000);
 </script>
 </body>
 </html>

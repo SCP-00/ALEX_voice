@@ -24,6 +24,19 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);heigh
 .stats-box .hint{color:var(--accent);margin-top:3px;font-size:9px}
 .cache-info{font-size:9px;color:var(--textDim);margin-top:4px;padding-top:4px;border-top:1px solid var(--border)}
 
+/* ── Sidebar History ── */
+.sidebar-section{margin-top:12px;border-top:1px solid var(--border);padding-top:10px}
+.sidebar-section-title{font-size:10px;color:var(--textDim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+.sidebar-history-list{max-height:180px;overflow-y:auto;font-size:11px}
+.sidebar-history-item{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:4px;cursor:pointer;transition:all .15s;margin-bottom:1px}
+.sidebar-history-item:hover{background:var(--surface2)}
+.sidebar-history-item.active{background:var(--surface2);border-left:2px solid var(--accent)}
+.sidebar-history-item .shi-title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--textDim);font-size:11px}
+.sidebar-history-item:hover .shi-title{color:var(--text)}
+.sidebar-history-empty{font-size:10px;color:var(--textDim);text-align:center;padding:10px 0}
+.new-chat-btn{width:100%;padding:5px 8px;margin-top:6px;border:1px dashed var(--border);border-radius:5px;background:transparent;color:var(--textDim);font-family:inherit;font-size:10px;cursor:pointer;transition:all .2s}
+.new-chat-btn:hover{border-color:var(--accent);color:var(--accent)}
+
 /* ── Main ── */
 .main{flex:1;display:flex;flex-direction:column;min-width:0}
 .header{padding:12px 20px;border-bottom:1px solid var(--border);background:var(--surface);display:flex;align-items:center;justify-content:space-between}
@@ -93,14 +106,23 @@ textarea:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--glow)}
 </head>
 <body>
 
-<div class="sidebar">
-<div class="logo">⚡ Alex Voice</div>
+<div class="sidebar">    <div class="logo">⚡ Alex Voice</div>
 <div class="plan-badge">LOCAL · 3000</div>
 <div class="mode-group" id="modeGroup">
 <button class="mode-btn active" data-mode="teacher" onclick="setMode('teacher')"><strong>🎓 Teacher</strong><br><span style="font-size:10px;color:var(--textDim)">Explicaciones claras</span></button>
 <button class="mode-btn" data-mode="conversation" onclick="setMode('conversation')"><strong>💬 Conversación</strong><br><span style="font-size:10px;color:var(--textDim)">Charla natural</span></button>
 <!-- 🌍 Traductor movido a puerto 3003 (app independiente) -->
 </div>
+
+<!-- ── History list in sidebar ── -->
+<div class="sidebar-section" id="sidebarHistory">
+  <div class="sidebar-section-title">📜 Conversaciones</div>
+  <div class="sidebar-history-list" id="sidebarHistoryList">
+    <div class="sidebar-history-empty">Cargando...</div>
+  </div>
+  <button class="new-chat-btn" id="newChatBtn" onclick="newConversation()">+ Nueva conversación</button>
+</div>
+
 <div class="stats-box" id="statsBox">
 <div>LLM: <span class="val" id="sLlama">—</span></div>
 <div>GPU: <span class="val" id="sGpu">—</span></div>
@@ -126,6 +148,7 @@ textarea:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--glow)}
 
 <div class="input-area">
 <div class="input-row">            <button class="action-btn" id="micBtn" onclick="toggleMic()" title="Grabar voz (ASR)">🎤</button>
+<button class="action-btn active" id="autoPlayBtn" onclick="toggleAutoPlay()" title="Auto-play: reproduce audio automáticamente al recibir respuesta" style="font-size:12px;font-weight:600">🔊</button>
 <button class="web-btn" id="webBtn" onclick="toggleWebSearch()" title="Buscar en web - activa DuckDuckGo para esta conversación">🔍</button>
 <textarea id="input" placeholder="Escribe un mensaje..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
 <button class="send-btn" id="sendBtn" onclick="send()">➤</button>
@@ -142,15 +165,31 @@ textarea:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--glow)}
 </div>
 
 <script>
-// ── Volver al menu principal ──
+// ── Volver al menu principal (detiene todo) ──
 function goToMenu() {
-  fetch('http://localhost:5000/api/stop', { method: 'POST' }).catch(() => {});
-  window.location.href = 'http://localhost:5000';
+  setStatus('⏹ Deteniendo servidores...');
+  let redirected = false;
+  const redirect = () => {
+    if (!redirected) { redirected = true; window.location.href = 'http://localhost:5000'; }
+  };
+  fetch('http://localhost:5000/api/stop', { method: 'POST' })
+    .catch(() => {})
+    .finally(redirect);
+  // Fallback: redirect after 1.5s even if fetch hangs
+  setTimeout(redirect, 1500);
 }
 
 // ── Config ──
 const API_BASE = window.location.origin;
 const LLAMA_HOST = 'http://localhost:8081';
+const MENU_API = 'http://localhost:5000';
+
+// ── History: load conversation ID from URL ──
+function getQueryParam(name) {
+  const params = new URLSearchParams(window.location.search);
+  return params.get(name) || '';
+}
+currentConvId = getQueryParam('conv_id');
 
 const MODES = {
   teacher: {
@@ -168,6 +207,7 @@ const MODES = {
 
 let currentMode = 'teacher';
 let messageHistory = [];
+let currentConvId = '';  // Current conversation ID for history
 let lastMsgId = 0;
 let isProcessing = false;
 let audioCtx = null;
@@ -179,6 +219,15 @@ let pollTimer = null;
 
 // ── Web Search toggle ──
 let webSearchEnabled = false;
+let autoPlayEnabled = true;
+
+function toggleAutoPlay() {
+  autoPlayEnabled = !autoPlayEnabled;
+  const btn = document.getElementById('autoPlayBtn');
+  btn.classList.toggle('active', autoPlayEnabled);
+  btn.textContent = autoPlayEnabled ? '🔊' : '🔇';
+  setStatus(autoPlayEnabled ? '🔊 Auto-play activado' : '🔇 Auto-play desactivado');
+}
 
 function toggleWebSearch() {
   webSearchEnabled = !webSearchEnabled;
@@ -285,6 +334,22 @@ function addMsg(role, text, extra) {
     d.appendChild(tb);
   }
   
+  // Correction card (conversation mode only)
+  if (extra && extra.correction) {
+    const cc = document.createElement('div');
+    cc.style.cssText = 'background:rgba(245,158,11,0.07);border:1px solid rgba(245,158,11,0.2);border-radius:6px;padding:6px 10px;margin-top:6px';
+    let corrHtml = '<div style="font-size:10px;color:var(--warn);text-transform:uppercase;letter-spacing:1px;margin-bottom:3px">📝 Corrección sutil</div>';
+    // Format the correction text nicely
+    let corrText = extra.correction;
+    // If it starts with 📝, strip it (we already show the icon)
+    if (corrText.startsWith('📝')) corrText = corrText.substring(1).trim();
+    // Highlight quoted text and arrows with subtle formatting
+    corrText = corrText.replace(/“/g, '"').replace(/”/g, '"');
+    corrHtml += '<div style="font-size:12px;line-height:1.5">' + escHtml(corrText) + '</div>';
+    cc.innerHTML = corrHtml;
+    d.appendChild(cc);
+  }
+  
   // Timestamp
   const t = document.createElement('div');
   t.className = 'ts';
@@ -296,9 +361,9 @@ function addMsg(role, text, extra) {
     const tb = document.createElement('div');
     tb.className = 'toolbar';
     
-    // Speak button - reads only the TTS text (TEXT field for teacher/translator)
+    // Speak button - repeat the TTS audio
     const spk = document.createElement('button');
-    spk.textContent = '🔊 Hablar';
+    spk.textContent = '🔊 Repetir';
     spk.onclick = () => speakTTS(extra.ttsText || text);
     tb.appendChild(spk);
     
@@ -364,25 +429,37 @@ async function send() {
         temperature: MODES[currentMode].temp,
         stream: false,
         web_search: webSearchEnabled,
+        conv_id: currentConvId,  // Pass conversation ID for history saving
       }),
     });
     const data = await r.json();
     
-    const content = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || data.content || '[sin respuesta]';
+    const rawContent = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || data.content || '';
+    const content = rawContent || (data.error ? '⚠️ ' + data.error : '🤔 El modelo no generó una respuesta. Intenta reformular tu pregunta.');
     const isCached = data.cached === true;
     const parsed = data.parsed || {};
     const mode = data.mode || currentMode;
     const toolCallsUsed = data.tool_calls_used || 0;
+    const correction = data.correction || '';
     
-    addMsg('assistant', content, { cached: isCached, parsed: parsed, mode: mode, toolCalls: toolCallsUsed });
+    // Update conversation ID from server (for history saving)
+    if (data.conv_id) {
+      currentConvId = data.conv_id;
+      // Update URL without reloading
+      const url = new URL(window.location);
+      url.searchParams.set('conv_id', currentConvId);
+      window.history.replaceState({}, '', url);
+    }
+    
+    addMsg('assistant', content, { cached: isCached, parsed: parsed, mode: mode, toolCalls: toolCallsUsed, correction: correction });
     messageHistory.push(userMsg, { role: 'assistant', content });
     if (messageHistory.length > 20) messageHistory = messageHistory.slice(-20);
     
     setStatus(isCached ? '⚡ Respuesta desde caché' : '✅ Listo');
     
-    // Auto-speak - only the TTS-relevant text
+    // Auto-speak - only the TTS-relevant text (only if auto-play enabled)
     const ttsText = parsed.tts_reading || parsed.text || content;
-    if (ttsText.length < 500 && !isRecording) {
+    if (autoPlayEnabled && ttsText.length < 500 && !isRecording && !isTtsPlaying) {
       speakTTS(ttsText);
     }
   } catch (e) {
@@ -708,12 +785,121 @@ async function pollStats() {
   }
 }
 
+// ── Sidebar History ──
+async function loadSidebarHistory() {
+  try {
+    const r = await fetch(MENU_API + '/api/history/list?limit=30');
+    const data = await r.json();
+    const list = document.getElementById('sidebarHistoryList');
+    const convs = data.conversations || [];
+    
+    if (convs.length === 0) {
+      list.innerHTML = '<div class="sidebar-history-empty">Sin historial</div>';
+      return;
+    }
+    
+    let html = '';
+    convs.forEach(c => {
+      const active = c.id === currentConvId ? 'active' : '';
+      const icons = {'teacher':'🎓','conversation':'💬','translator':'🌍'};
+      html += '<div class="sidebar-history-item ' + active + '" onclick="loadConversation(\'' + c.id + '\')">' +
+        '<span>' + (icons[c.mode] || '💬') + '</span>' +
+        '<span class="shi-title">' + escHtml(c.title || 'Sin título') + '</span>' +
+      '</div>';
+    });
+    list.innerHTML = html;
+  } catch (e) {
+    document.getElementById('sidebarHistoryList').innerHTML = '<div class="sidebar-history-empty">Error cargando</div>';
+  }
+}
+
+async function loadConversation(convId) {
+  if (convId === currentConvId) return;  // Already loaded
+  
+  try {
+    const r = await fetch(MENU_API + '/api/history/get?id=' + convId);
+    const conv = await r.json();
+    if (!conv || !conv.messages) {
+      setStatus('❌ Error cargando conversación');
+      return;
+    }
+    
+    // Clear current messages
+    document.getElementById('msgs').innerHTML = '';
+    messageHistory = [];
+    currentConvId = convId;
+    
+    // Update URL
+    const url = new URL(window.location);
+    url.searchParams.set('conv_id', convId);
+    window.history.replaceState({}, '', url);
+    
+    // Load messages
+    const msgs = conv.messages || [];
+    msgs.forEach(msg => {
+      const role = msg.role === 'user' ? 'user' : 'assistant';
+      if (role === 'assistant') {
+        const parsed = msg.parsed || {};
+        addMsg(role, msg.content, { parsed: parsed, mode: conv.mode || currentMode });
+      } else {
+        addMsg(role, msg.content);
+      }
+      messageHistory.push({ role: msg.role, content: msg.content });
+    });
+    
+    setStatus('📜 Conversación cargada (' + msgs.length + ' mensajes)');
+    loadSidebarHistory();  // Update sidebar
+    
+  } catch (e) {
+    setStatus('❌ Error: ' + e.message);
+  }
+}
+
+function newConversation() {
+  currentConvId = '';
+  document.getElementById('msgs').innerHTML = '';
+  messageHistory = [];
+  
+  // Remove conv_id from URL
+  const url = new URL(window.location);
+  url.searchParams.delete('conv_id');
+  window.history.replaceState({}, '', url);
+  
+  // Reset UI
+  document.getElementById('msgs').innerHTML = '<div class="msg assistant">⚡ Alex Voice activo: LLM local (GPU) + Kokoro-82M + Piper (fallback)<div class="ts">Alex Voice · Local</div></div>';
+  setStatus('✅ Nueva conversación');
+  loadSidebarHistory();
+}
+
+// ── Load conversation from URL param on init ──
+async function loadInitConversation() {
+  if (currentConvId) {
+    await loadConversation(currentConvId);
+  }
+  loadSidebarHistory();
+}
+
 // ── Init ──
-// Detectar modo por puerto: 3001 = conversación, otro = teacher
+// Detectar modo por puerto: 3001 = conversación, 3000 = teacher
+// LOCK: ocultar el mode switcher — cada servidor es de un solo modo
 const initPort = window.location.port;
-setMode(initPort === '3001' ? 'conversation' : 'teacher');
+const isConvMode = initPort === '3001';
+setMode(isConvMode ? 'conversation' : 'teacher');
+
+// Lock mode: ocultar botones del otro modo
+if (isConvMode) {
+  // Conversation mode: solo mostrar botón de conversación
+  document.querySelectorAll('[data-mode="teacher"]').forEach(el => el.style.display = 'none');
+  document.querySelector('.sidebar .plan-badge').textContent = 'LOCAL · 3001';
+} else {
+  // Teacher mode: solo mostrar botón de teacher
+  document.querySelectorAll('[data-mode="conversation"]').forEach(el => el.style.display = 'none');
+  document.querySelector('.sidebar .plan-badge').textContent = 'LOCAL · 3000';
+}
+
 pollStats();
 pollTimer = setInterval(pollStats, 3000);
+loadInitConversation();  // Load conversation if conv_id in URL
 </script>
 </body>
 </html>

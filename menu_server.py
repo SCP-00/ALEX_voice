@@ -14,10 +14,14 @@ API:
   POST /api/stop            → Mata todos los procesos
 """
 
-import json, os, sys, time, signal, subprocess, urllib.request, urllib.error, webbrowser
+import json, os, sys, time, signal, subprocess, urllib.request, urllib.error
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from threading import Thread, Lock
+from urllib.parse import urlparse, parse_qs, unquote
+
+# ── History + Vocabulary engine ──
+import history as history_mod
 
 PROJECT_ROOT = Path(__file__).parent.resolve()
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
@@ -221,12 +225,6 @@ def start_server(script, name, port, mode):
         log(f"Error iniciando {name}: {e}")
         return False
 
-def open_browser(url):
-    try:
-        webbrowser.open(url)
-    except:
-        pass
-
 # ── HTTP Handler ──
 class MenuHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
@@ -241,6 +239,32 @@ class MenuHandler(SimpleHTTPRequestHandler):
                 "servers": list(_running.keys()),
                 "llama_alive": check_llama_alive(),
             })
+        elif self.path == "/api/history/list":
+            parsed = urlparse(self.path)
+            qs = parse_qs(parsed.query)
+            limit = int(qs.get('limit', ['50'])[0])
+            self._json({'conversations': history_mod.list_conversations(limit)})
+        elif self.path.startswith("/api/history/get"):
+            parsed = urlparse(self.path)
+            qs = parse_qs(parsed.query)
+            conv_id = qs.get('id', [''])[0]
+            if not conv_id:
+                self._json({'error': 'Missing id'})
+                return
+            conv = history_mod.load_conversation(conv_id)
+            if conv:
+                self._json(conv)
+            else:
+                self._json({'error': 'Not found'})
+        elif self.path == "/api/vocabulary":
+            self._json(history_mod.get_all_vocabulary())
+        elif self.path == "/api/vocabulary/stats":
+            self._json(history_mod.get_vocabulary_stats())
+        elif self.path == "/api/vocabulary/due":
+            parsed = urlparse(self.path)
+            qs = parse_qs(parsed.query)
+            limit = int(qs.get('limit', ['20'])[0])
+            self._json({'words': history_mod.get_due_vocabulary(limit)})
         else:
             super().do_GET()
 
@@ -254,76 +278,78 @@ class MenuHandler(SimpleHTTPRequestHandler):
         elif self.path == "/api/stop":
             kill_all()
             self._json({"ok": True, "message": "Todos los servidores detenidos"})
+        elif self.path == "/api/history/delete":
+            data = self._parse_body()
+            ok = history_mod.delete_conversation(data.get('id', ''))
+            self._json({'ok': ok})
+        elif self.path == "/api/history/clear":
+            count = history_mod.clear_all_history()
+            self._json({'ok': True, 'deleted': count})
+        elif self.path == "/api/vocabulary/delete":
+            data = self._parse_body()
+            ok = history_mod.delete_vocabulary_word(data.get('word', ''), data.get('language', ''))
+            self._json({'ok': ok})
+        elif self.path == "/api/vocabulary/clear":
+            count = history_mod.clear_all_vocabulary()
+            self._json({'ok': True, 'deleted': count})
         else:
             self._json({"error": "ruta no valida"})
 
     def _start_mode(self, name, port, mode_name):
-        # Translator puede correr en paralelo con Teacher/Conversation
+        # Si hay un modo LLM activo, detenerlo primero
+        for active in list(_current_modes):
+            if active in ("teacher", "conv"):
+                log(f"Deteniendo modo activo '{active}' antes de iniciar '{name}'")
+                kill_all()
+                time.sleep(1)
+                break
+        
+        # Translator puede correr independientemente
         if name == "translator":
             if "translator" in _current_modes:
                 self._json({"ok": True, "url": "http://localhost:3003", "mode": "translator", "info": "Ya estaba corriendo"})
                 return
             ok = start_server("translator.py", "translator", 3003, "translator")
             if ok:
-                t = Thread(target=lambda: (time.sleep(3), open_browser("http://localhost:3003")))
-                t.daemon = True
-                t.start()
                 self._json({"ok": True, "url": "http://localhost:3003", "mode": "translator"})
             else:
                 self._json({"error": "No se pudo iniciar el Traductor"})
             return
-        
-        # Teacher y Conversation comparten llama-server, solo 1 a la vez
-        for active in _current_modes:
-            if active in ("teacher", "conv"):
-                self._json({
-                    "error": f"Ya hay un modo LLM activo: {active}. Teacher y Conversation comparten llama-server y no pueden ejecutarse simultáneamente.",
-                    "current_modes": list(_current_modes),
-                })
-                return
 
-        if name == "conv":
-            model = find_model()
-            if not model:
-                self._json({"error": "No se encontró modelo GGUF. Ejecuta setup.bat primero."})
-                return
-            llama_ok = start_llama(model)
-            if not llama_ok:
-                self._json({"error": "llama-server no pudo cargar el modelo en GPU"})
-                return
-            ok = start_server("conv_server.py", "conv", 3001, "conversation")
-            if ok:
-                t = Thread(target=lambda: (time.sleep(2), open_browser("http://localhost:3001")))
-                t.daemon = True
-                t.start()
-                self._json({"ok": True, "url": "http://localhost:3001", "mode": "conversation"})
-            else:
-                self._json({"error": "No se pudo iniciar Conversación"})
-            return
-
-        # Teacher/Conversation: necesita llama-server
+        # Teacher o Conversation: necesita llama-server
         model = find_model()
         if not model:
             self._json({"error": "No se encontró modelo GGUF"})
             return
 
-        # Iniciar llama-server (blocking — espera hasta que el modelo cargue en GPU)
         llama_ok = start_llama(model)
         if not llama_ok:
             self._json({"error": "llama-server no pudo cargar el modelo en GPU"})
             return
 
-        # Iniciar server.py
-        ok = start_server("server.py", name, port, mode_name)
+        # Elegir script según modo
+        if name == "conv":
+            script = "conv_server.py"
+        else:
+            script = "teacher_server.py"
+
+        ok = start_server(script, name, port, mode_name)
         if ok:
-            t = Thread(target=lambda: (time.sleep(2), open_browser(f"http://localhost:{port}")))
-            t.daemon = True
-            t.start()
             self._json({"ok": True, "url": f"http://localhost:{port}", "mode": mode_name})
         else:
             self._json({"error": "No se pudo iniciar el servidor"})
 
 
+
+    def _parse_body(self):
+        """Parse JSON body from POST request."""
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            if length > 0:
+                return json.loads(self.rfile.read(length).decode())
+        except:
+            pass
+        return {}
 
     def _serve(self, filename):
         fp = FRONTEND_DIR / filename

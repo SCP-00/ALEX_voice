@@ -90,6 +90,33 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 /* Responsive */
 @media(max-width:720px){.modes{grid-template-columns:1fr}}
 
+/* History + Vocabulary sections */
+.history-section,.vocab-section{margin-top:20px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px}
+.section-header{display:flex;align-items:center;justify-content:space-between;font-size:13px;font-weight:600;margin-bottom:10px;color:var(--textDim)}
+.header-actions{display:flex;gap:6px}
+.clear-btn{padding:4px 10px;border:1px solid var(--error);border-radius:5px;background:transparent;color:var(--error);font-family:inherit;font-size:10px;cursor:pointer;transition:all .2s}
+.clear-btn:hover{background:rgba(239,68,68,.1)}
+.history-list,.vocab-summary{max-height:200px;overflow-y:auto;font-size:12px}
+.history-item{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-radius:6px;cursor:pointer;transition:all .2s;margin-bottom:2px}
+.history-item:hover{background:var(--surface2)}
+.history-item .h-left{display:flex;align-items:center;gap:8px;overflow:hidden}
+.history-item .h-icon{font-size:14px;flex-shrink:0}
+.history-item .h-title{font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.history-item .h-meta{font-size:9px;color:var(--textDim);margin-top:1px}
+.history-item .h-del{background:none;border:none;color:var(--textDim);cursor:pointer;font-size:12px;padding:2px;border-radius:3px;opacity:0;transition:all .2s}
+.history-item:hover .h-del{opacity:1}
+.history-item .h-del:hover{color:var(--error);background:rgba(239,68,68,.1)}
+.history-empty,.vocab-empty{font-size:11px;color:var(--textDim);text-align:center;padding:20px 0}
+.vocab-stats{display:flex;gap:12px;margin-bottom:8px}
+.vocab-stat{flex:1;text-align:center;padding:8px;background:var(--surface2);border-radius:6px}
+.vocab-stat .num{font-size:20px;font-weight:700;color:var(--accent)}
+.vocab-stat .label{font-size:9px;color:var(--textDim);margin-top:2px;text-transform:uppercase}
+.vocab-word{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:5px;font-size:12px}
+.vocab-word .vw-word{font-weight:600;color:var(--text)}
+.vocab-word .vw-reading{font-style:italic;color:var(--textDim);font-size:11px}
+.vocab-word .vw-trans{color:var(--textDim);font-size:11px}
+.vocab-word .vw-lang{font-size:9px;padding:1px 5px;border-radius:3px;background:var(--surface2)}
+
 /* Keyboard shortcut hint */
 .shortcuts{font-size:10px;color:var(--textDim);text-align:center;margin-top:16px}
 .shortcuts kbd{background:var(--surface2);border:1px solid var(--border);padding:1px 4px;border-radius:3px;font-family:inherit;font-size:9px}
@@ -148,6 +175,32 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     </div>
   </div>
 
+  <!-- ── History Section ── -->
+  <div class="history-section" id="historySection">
+    <div class="section-header">
+      <span>📜 Historial</span>
+      <span class="header-actions">
+        <button class="clear-btn" id="clearHistoryBtn" onclick="clearHistory()" style="display:none">🗑 Limpiar todo</button>
+      </span>
+    </div>
+    <div class="history-list" id="historyList">
+      <div class="history-empty">Sin conversaciones aún. Inicia un modo para comenzar.</div>
+    </div>
+  </div>
+
+  <!-- ── Vocabulary Section ── -->
+  <div class="vocab-section" id="vocabSection">
+    <div class="section-header">
+      <span>📚 Vocabulario</span>
+      <span class="header-actions">
+        <button class="clear-btn" id="clearVocabBtn" onclick="clearVocab()" style="display:none">🗑 Limpiar</button>
+      </span>
+    </div>
+    <div class="vocab-summary" id="vocabSummary">
+      <div class="vocab-empty">Sin vocabulario aún. Usa el modo Teacher para aprender palabras.</div>
+    </div>
+  </div>
+
   <div class="shortcuts">
     <kbd>1</kbd> Teacher · <kbd>2</kbd> Conversación · <kbd>3</kbd> Traductor · <kbd>Esc</kbd> Detener
   </div>
@@ -178,12 +231,12 @@ async function pollStatus() {
     const text = document.getElementById('statusText');
     const stopBtn = document.getElementById('stopBtn');
     
-    if (s.mode) {
+    const activeModes = s.modes || [];
+    if (activeModes.length > 0) {
       dot.className = 'dot active';
-      text.textContent = '✅ ' + modeLabel(s.mode) + ' — Activo';
+      text.textContent = '✅ ' + activeModes.map(modeLabel).join(' + ') + ' — Activo';
       stopBtn.classList.add('show');
-      // Update card badges
-      updateCards(s.mode);
+      updateCards(activeModes);
     } else {
       dot.className = 'dot idle';
       text.textContent = '⚡ Selecciona un modo para comenzar';
@@ -200,18 +253,19 @@ function modeLabel(m) {
   return {'teacher':'🎓 Teacher','conv':'💬 Conversación','translator':'🌍 Traductor','all':'⚡ Todos'}[m] || m;
 }
 
-function updateCards(mode) {
+function updateCards(modes) {
+  const modeArray = Array.isArray(modes) ? modes : [modes];
   document.querySelectorAll('.mode-card').forEach(c => c.style.opacity = '0.5');
   resetBadges();
-  if (mode === 'teacher' || mode === 'all') {
+  if (modeArray.includes('teacher') || modeArray.includes('all')) {
     document.querySelector('.mode-card.teacher').style.opacity = '1';
     document.getElementById('badgeTeacher').className = 'status-badge running';
   }
-  if (mode === 'conv' || mode === 'all') {
+  if (modeArray.includes('conv') || modeArray.includes('all')) {
     document.querySelector('.mode-card.conv').style.opacity = '1';
     document.getElementById('badgeConv').className = 'status-badge running';
   }
-  if (mode === 'translator' || mode === 'all') {
+  if (modeArray.includes('translator') || modeArray.includes('all')) {
     document.querySelector('.mode-card.translator').style.opacity = '1';
     document.getElementById('badgeTranslator').className = 'status-badge running';
   }
@@ -297,7 +351,7 @@ function showLoading(mode) {
   const labels = {
     'teacher': {title: '🎓 Iniciando Teacher', desc: 'Cargando LLM en GPU + Kokoro TTS...'},
     'conv': {title: '💬 Iniciando Conversación', desc: 'Cargando LLM en GPU + Kokoro TTS...'},
-    'translator': {title: '🌍 Iniciando Traductor', desc: 'Cargando Qwen3-TTS en GPU + argos-translate...'},
+    'translator': {title: '🌍 Iniciando Traductor', desc: 'Cargando Whisper large-v3-turbo + argos-translate... La página se abrirá de inmediato mientras los modelos cargan en background.'},
   };
   
   document.getElementById('loadTitle').textContent = labels[mode]?.title || 'Iniciando...';
@@ -324,9 +378,157 @@ document.addEventListener('keydown', function(e) {
   else if (e.key === 'Escape') stopMode();
 });
 
+// ── History ──
+async function loadHistory() {
+  try {
+    const r = await fetch(API + '/api/history/list?limit=20');
+    const data = await r.json();
+    const list = document.getElementById('historyList');
+    const convs = data.conversations || [];
+    
+    if (convs.length === 0) {
+      list.innerHTML = '<div class="history-empty">Sin conversaciones aún. Inicia un modo para comenzar.</div>';
+      document.getElementById('clearHistoryBtn').style.display = 'none';
+      return;
+    }
+    
+    document.getElementById('clearHistoryBtn').style.display = 'inline-block';
+    
+    let html = '';
+    convs.forEach(c => {
+      const date = (c.updated_at || c.created_at || '').substring(0, 10);
+      const time = (c.updated_at || c.created_at || '').substring(11, 16);
+      const icons = {'teacher':'🎓','conversation':'💬','translator':'🌍'};
+      const icon = icons[c.mode] || '💬';
+      html += '<div class="history-item" onclick="openHistory(\'' + c.id + '\')">' +
+        '<div class="h-left">' +
+          '<span class="h-icon">' + icon + '</span>' +
+          '<div>' +
+            '<div class="h-title">' + escHtml(c.title || 'Sin título') + '</div>' +
+            '<div class="h-meta">' + date + ' ' + time + ' · ' + c.message_count + ' msgs</div>' +
+          '</div>' +
+        '</div>' +
+        '<button class="h-del" onclick="event.stopPropagation();deleteHistoryItem(\'' + c.id + '\')">✕</button>' +
+      '</div>';
+    });
+    list.innerHTML = html;
+  } catch (e) {
+    document.getElementById('historyList').innerHTML = '<div class="history-empty">Error cargando historial</div>';
+  }
+}
+
+function openHistory(convId) {
+  // Open the conversation's mode with the conv_id parameter
+  // First, find what mode this conversation is
+  fetch(API + '/api/history/get?id=' + convId)
+    .then(r => r.json())
+    .then(conv => {
+      const mode = conv.mode || 'conversation';
+      const ports = {'teacher': 3000, 'conversation': 3001};
+      const port = ports[mode] || 3000;
+      window.open('http://localhost:' + port + '/?conv_id=' + convId, '_blank');
+    })
+    .catch(() => {
+      window.open('http://localhost:3000/?conv_id=' + convId, '_blank');
+    });
+}
+
+async function deleteHistoryItem(convId) {
+  try {
+    await fetch(API + '/api/history/delete', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id: convId}),
+    });
+    loadHistory();
+  } catch (e) {}
+}
+
+async function clearHistory() {
+  if (!confirm('¿Borrar todo el historial de conversaciones?')) return;
+  try {
+    await fetch(API + '/api/history/clear', { method: 'POST' });
+    loadHistory();
+  } catch (e) {}
+}
+
+// ── Vocabulary ──
+async function loadVocab() {
+  try {
+    const [statsR, dueR] = await Promise.all([
+      fetch(API + '/api/vocabulary/stats'),
+      fetch(API + '/api/vocabulary/due?limit=10'),
+    ]);
+    const stats = await statsR.json();
+    const due = await dueR.json();
+    const summary = document.getElementById('vocabSummary');
+    
+    if (stats.total === 0) {
+      summary.innerHTML = '<div class="vocab-empty">Sin vocabulario aún. Usa el modo Teacher para aprender palabras.</div>';
+      document.getElementById('clearVocabBtn').style.display = 'none';
+      return;
+    }
+    
+    document.getElementById('clearVocabBtn').style.display = 'inline-block';
+    
+    const langLabels = {'ja':'🇯🇵 Japonés','es':'🇪🇸 Español','en':'🇬🇧 Inglés','zh':'🇨🇳 Chino','ko':'🇰🇷 Coreano'};
+    let byLang = '';
+    for (const [lang, count] of Object.entries(stats.by_language || {})) {
+      byLang += '<span style="margin:0 4px;font-size:11px;color:var(--textDim)">' + (langLabels[lang] || lang) + ': <strong>' + count + '</strong></span>';
+    }
+    
+    let html = '<div class="vocab-stats">' +
+      '<div class="vocab-stat"><div class="num">' + stats.total + '</div><div class="label">Palabras</div></div>' +
+      '<div class="vocab-stat"><div class="num" style="color:var(--warn)">' + stats.due_for_review + '</div><div class="label">Por repasar</div></div>' +
+    '</div>';
+    
+    if (byLang) {
+      html += '<div style="text-align:center;margin-bottom:8px;font-size:11px">' + byLang + '</div>';
+    }
+    
+    // Show due words
+    const words = due.words || [];
+    if (words.length > 0) {
+      html += '<div style="font-size:10px;color:var(--warn);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">📝 Palabras para repasar</div>';
+      words.forEach(w => {
+        const langFlag = {'ja':'🇯🇵','es':'🇪🇸','en':'🇬🇧','zh':'🇨🇳','ko':'🇰🇷'}[w.language] || '🌐';
+        html += '<div class="vocab-word">' +
+          '<span class="vw-lang">' + langFlag + '</span>' +
+          '<span class="vw-word">' + escHtml(w.word) + '</span>' +
+          (w.reading ? '<span class="vw-reading">' + escHtml(w.reading) + '</span>' : '') +
+          '<span class="vw-trans">→ ' + escHtml(w.translation) + '</span>' +
+        '</div>';
+      });
+    }
+    
+    summary.innerHTML = html;
+  } catch (e) {
+    document.getElementById('vocabSummary').innerHTML = '<div class="vocab-empty">Error cargando vocabulario</div>';
+  }
+}
+
+async function clearVocab() {
+  if (!confirm('¿Borrar todo el vocabulario? Los datos SRS se perderán.')) return;
+  try {
+    await fetch(API + '/api/vocabulary/clear', { method: 'POST' });
+    loadVocab();
+  } catch (e) {}
+}
+
+function escHtml(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 // ── Init ──
 pollTimer = setInterval(pollStatus, 3000);
 pollStatus();
+loadHistory();
+loadVocab();
+
+// Refresh history + vocab periodically
+setInterval(loadHistory, 15000);
+setInterval(loadVocab, 15000);
 </script>
 </body>
 </html>
