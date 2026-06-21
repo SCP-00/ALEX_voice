@@ -127,11 +127,11 @@ KOKORO_LOCK = threading.Lock()
 HAVE_KOKORO = False
 
 KOKORO_CONFIG = {
-    'es': {'lang': 'es', 'voice': 'ef_dora'},
-    'en': {'lang': 'en-us', 'voice': 'af_heart'},
-    'ja': {'lang': 'ja', 'voice': 'jf_alpha'},
-    'fr': {'lang': 'fr-fr', 'voice': 'ff_siwis'},
-    'de': {'lang': 'de', 'voice': 'bf_emma'},
+    'es': {'lang': 'es', 'voice': 'em_alex', 'speed': 0.9},
+    'en': {'lang': 'en-us', 'voice': 'af_heart', 'speed': 1.0},
+    'ja': {'lang': 'ja', 'voice': 'jf_alpha', 'speed': 0.9},
+    'fr': {'lang': 'fr-fr', 'voice': 'ff_siwis', 'speed': 1.0},
+    'de': {'lang': 'de', 'voice': 'bf_emma', 'speed': 1.0},
 }
 
 KOKORO_MODEL_PATH = PROJECT_ROOT / "models" / "onnx" / "kokoro-v1.0.onnx"
@@ -169,8 +169,9 @@ def kokoro_synthesize(text, lang='es'):
     if k is None:
         return None, None
     cfg = KOKORO_CONFIG.get(lang, KOKORO_CONFIG['es'])
+    speed = cfg.get('speed', 1.0)
     try:
-        audio, sr = k.create(text, voice=cfg['voice'], speed=1.0, lang=cfg['lang'])
+        audio, sr = k.create(text, voice=cfg['voice'], speed=speed, lang=cfg['lang'])
         return audio, sr
     except Exception as e:
         print(f"[Translator] Kokoro synthesis error: {e}")

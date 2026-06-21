@@ -1,40 +1,95 @@
-# Benchmark artifacts (generated, not source)
+# ══════════════════════════════════════════════════════════
+#  Alex Voice — .gitignore
+#  Version: v3.3.1 (June 2026)
+# ══════════════════════════════════════════════════════════
+
+# ── Python ──────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+*.whl
+
+# ── Virtual Environment ────────────────────────────────
+venv/
+.venv/
+env/
+
+# ── Model Files (large, auto-downloaded) ───────────────
+models/*.gguf
+models/*.bin
+models/onnx/*.onnx
+models/onnx/*.bin
+models/onnx/*.json
+models/onnx/*.txt
+
+# ── Downloaded Archives ────────────────────────────────
+*.zip
+*.tar.gz
+*.tar
+llama-server-bin/
+llama-server-tmp/
+llama.cpp/
+
+# ── Piper Runtime ──────────────────────────────────────
+bin/piper/*.dll
+bin/piper/*.ort
+bin/piper/*phonemize*
+bin/piper/espeak-ng-data/
+bin/piper/*.exe
+
+# ── Database Files ─────────────────────────────────────
+grammar_app/data/*.db
+grammar_app/data/*.db-shm
+grammar_app/data/*.db-wal
+
+# ── Test Results ───────────────────────────────────────
+tests/e2e/results_*.json
+
+# ── Logs ───────────────────────────────────────────────
+*.log
+/tmp/*.log
+output.log
+
+# ── Temp Files ─────────────────────────────────────────
+*.tmp
+tmp/
+nul
+
+# ── Benchmark Artifacts ────────────────────────────────
 benchmark_*.json
 benchmark_*.md
 benchmark_report.md
 benchmark_logs.json
 benchmark_*.py
 
-# Python cache
-__pycache__/
-*.pyc
+# ── Jupyter Notebook Artifacts ─────────────────────────
+.ipynb_checkpoints/
 
-# Temp files
-*.tmp
-*.log
-tmp/
-output.log
-nul
+# ── IDE / Editor ───────────────────────────────────────
+.vscode/
+.idea/
+*.swo
+*.swn
+*.swp
 
-# Downloaded archives and local runtime binaries
-*.zip
-llama-server-bin/
-llama-server-tmp/
-llama.cpp/
-
-# Large local model downloads
-models/*.gguf
-models/*.bin
-
-# Piper runtime data extracted by setup/manual downloads
-bin/piper/*.dll
-bin/piper/*.ort
-bin/piper/*phonemize*
-bin/piper/espeak-ng-data/
-
-# Python virtual environment
-venv/
-
-# OS files
-Thumbs.db
+# ── OS Files ───────────────────────────────────────────
 .DS_Store
+Thumbs.db
+desktop.ini
+
+# ── HuggingFace Cache ──────────────────────────────────
+.huggingface/
+.cache/huggingface/
+
+# ── Python Packages Cache ──────────────────────────────
+.pip/
+pip-wheel-metadata/
+
+# ── Environment Files ──────────────────────────────────
+.env
+.env.local
+*.envrc

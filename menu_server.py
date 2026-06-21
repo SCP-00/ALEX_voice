@@ -83,7 +83,7 @@ def kill_all():
             pass
     except Exception:
         pass
-    # Matar procesos hij@s (server.py, translator.py)
+    # Matar procesos hij@s (server.py, translator.py, grammar_app)
     try:
         subprocess.run(["pkill", "-f", "python.*server.py"], capture_output=True, timeout=5)
     except:
@@ -92,8 +92,12 @@ def kill_all():
         subprocess.run(["pkill", "-f", "python.*translator.py"], capture_output=True, timeout=5)
     except:
         pass
+    try:
+        subprocess.run(["pkill", "-f", "grammar_app"], capture_output=True, timeout=5)
+    except:
+        pass
 
-def start_server(script, name, port, mode):
+def start_server(script, name, port, mode, extra_env=None):
     global _current_mode
     path = PROJECT_ROOT / script
     if not path.exists():
@@ -103,6 +107,8 @@ def start_server(script, name, port, mode):
     env["PLAN_B_PORT"] = str(port)
     env["OLLAMA_LLAMA_MODEL"] = OLLAMA_MODEL
     env["LLAMA_HOST"] = OLLAMA_HOST
+    if extra_env:
+        env.update(extra_env)
     try:
         _kwargs = {"env": env}
         if sys.platform == "win32":
@@ -150,6 +156,8 @@ class MenuHandler(SimpleHTTPRequestHandler):
             self._start_mode("conv", port=3001, mode_name="conversation")
         elif self.path == "/api/start/translator":
             self._start_mode("translator", port=3003, mode_name="translator")
+        elif self.path == "/api/start/grammar":
+            self._start_mode("grammar", port=3004, mode_name="grammar")
         elif self.path == "/api/stop":
             kill_all()
             self._json({"ok": True, "message": "Todos los servidores detenidos"})
@@ -173,6 +181,18 @@ class MenuHandler(SimpleHTTPRequestHandler):
                 self._json({"ok": True, "url": "http://localhost:3003", "mode": "translator"})
             else:
                 self._json({"error": "No se pudo iniciar el Traductor"})
+            return
+
+        if name == "grammar":
+            # Grammar App is standalone Flask — no Ollama needed
+            ok = start_server("grammar_app/backend/app.py", "grammar", 3004, "grammar", extra_env={"GRAMMAR_PORT": "3004"})
+            if ok:
+                t = Thread(target=lambda: (time.sleep(2), open_browser("http://localhost:3004")))
+                t.daemon = True
+                t.start()
+                self._json({"ok": True, "url": "http://localhost:3004", "mode": "grammar"})
+            else:
+                self._json({"error": "No se pudo iniciar Grammar App"})
             return
 
         if name == "conv":

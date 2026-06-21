@@ -267,6 +267,15 @@ function addMsg(role,text,extra={}){
 
 function esc(s){return s?s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'):''}
 
+function fixWordSpacing(t){
+  if(!t)return'';
+  const L='A-Za-zÀ-ÿ\u0100-\u024F';
+  t=t.replace(new RegExp('([.!?;:,])(['+L+'])','g'),'$1 $2');
+  t=t.replace(new RegExp('(['+L+'])\\(','g'),'$1 $2');
+  t=t.replace(new RegExp('\\)(['+L+'\\w])','g'),'$1 $2');
+  t=t.replace(new RegExp('(['+L+'])([+=])(['+L+'])','g'),'$1 $2 $3');
+  return t.replace(/\s+/g,' ').trim();
+}
 function parseMultiOutput(text){
   const result={text:'',tts_reading:'',pronunciation:'',translation:'',explanation:'',exercise:''};
   if(!text)return result;
@@ -274,7 +283,8 @@ function parseMultiOutput(text){
   let m;
   while((m=re.exec(text))!==null){
     const tag=m[1].trim().toUpperCase();
-    const val=m[2].trim();
+    let val=m[2].trim();
+    val=fixWordSpacing(val);
     if(tag==='TEXT')result.text=val;
     else if(tag==='TTS_READING')result.tts_reading=val;
     else if(tag==='PRONUNCIATION'||tag==='ROMANJI')result.pronunciation=val;

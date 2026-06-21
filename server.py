@@ -22,10 +22,19 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from collections import OrderedDict
 
-# Regex compilada: caracteres seguros para TTS (Latin + español)
+# Regex compilada: caracteres seguros para TTS por idioma
+# Base: Latin + español (para ES/EN)
 _TTS_SAFE_RE = re.compile(
     r"[^\x00-\x7F\u00C0-\u024F\u1E00-\u1EFF"
     r"\u0300-\u036F\s0-9.,!?;:\'\"¡¿\(\)\[\]\{\}\-–—…&@#%*+=/<>~`$€£¥°]"
+)
+# Japonés: Latin + hiragana + katakana + kanji + puntuación JP
+_TTS_SAFE_JA_RE = re.compile(
+    r"[^\x00-\x7F\u00C0-\u024F\u1E00-\u1EFF"
+    r"\u0300-\u036F\s0-9.,!?;:\'\"¡¿\(\)\[\]\{\}\-–—…&@#%*+=/<>~`$€£¥°"
+    r"\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\u3400-\u4DBF"  # hiragana + katakana + CJK
+    r"\u3000-\u303F\uFF00-\uFFEF"  # CJK punctuation + fullwidth
+    r"]"
 )
 
 # Regex para thinking tags del LLM (Qwen thinking mode)
@@ -118,8 +127,10 @@ class ResponseCache:
 
 # ── Config ─────────────────────────────────────────────────
 # Modelo LLM: prometheus-orchestrator (Qwen3.5 4B Instruct) via Ollama API
-# Cambia a http://localhost:8081 si usas llama-server directo con GGUF
+# Contexto: 64K optimizado para velocidad + VRAM mínima
+# KV cache q4_0: ~1.2GB vs ~5GB a 262K
 OLLAMA_LLAMA_MODEL = os.environ.get("OLLAMA_LLAMA_MODEL", "prometheus-orchestrator")
+NUM_CTX = int(os.environ.get("NUM_CTX", "65536"))  # 64K contexto optimizado
 LLAMA_HOST = os.environ.get("LLAMA_HOST", "http://localhost:11434/v1")
 
 # Soporte para --mode y --port desde línea de comandos (conv_server.py wrapper)
@@ -165,16 +176,20 @@ except Exception:
     HAVE_NVML = False
     _safe_print("[B] [!] pynvml no disponible. Stats GPU no disponibles.")
 
-# ── Sanitizador de texto para TTS ───────────────────────────
-def _sanitize_tts_text(text):
+# ── Sanitizador de texto para TTS (language-aware) ───────────
+def _sanitize_tts_text(text, lang='es'):
     """Elimina todo lo que no debe ser leído en voz alta por TTS.
+    
+    Ahora es language-aware:
+    - Para japonés: preserva hiragana, katakana y kanji
+    - Para español/inglés: elimina CJK (Kokoro no los soporta en ES/EN)
     
     Pasos:
     1. Eliminar thinking tags (reasoning chain del LLM)
     2. Eliminar emojis Unicode
     3. Eliminar descripciones de emojis ("carita sonriente", "emoji")
-    4. Eliminar caracteres CJK/Árabe/Cirílico (Kokoro solo soporta Latin)
-    5. Normalizar espacios
+    4. Strip caracteres no pronunciables (CJK para ES/EN, Latin para otros)
+    5. Normalizar espacios y agregar pausas naturales
     """
     if not text:
         return ""
@@ -188,17 +203,106 @@ def _sanitize_tts_text(text):
     # 3. Strip emoji description words
     clean = _EMOJI_WORD_RE.sub('', clean)
     
-    # 4. Strip non-pronounceable characters (CJK, etc.)
-    clean = _TTS_SAFE_RE.sub(' ', clean)
+    # 4. Strip non-pronounceable characters (language-aware)
+    if lang == 'ja':
+        # Para japonés: preservar hiragana, katakana, kanji + Latin
+        clean = _TTS_SAFE_JA_RE.sub(' ', clean)
+    else:
+        # Para español/inglés: eliminar CJK (Kokoro solo soporta Latin)
+        clean = _TTS_SAFE_RE.sub(' ', clean)
     
-    # 5. Collapse multiple spaces and strip
-    clean = re.sub(r'\s+', ' ', clean).strip()
+    # 5. Normalizar espacios y agregar pausas
+    clean = _normalize_tts_spacing(clean)
     
     # 6. Remove orphaned punctuation at start/end
     clean = re.sub(r'^[,;:\s]+', '', clean)
     clean = re.sub(r'[,;:\s]+$', '', clean)
     
     return clean
+
+
+def _fix_word_spacing(text):
+    """Inserta espacios entre palabras Latin concatenadas.
+    
+    El LLM de 4B a veces produce texto sin espacios entre palabras:
+      'Sensei,ohayōgozaimasu.' → 'Sensei, ohayō gozaimasu.'
+      'SEN-shee(like)+o-ha' → 'SEN-shee (like) + o-ha'
+    
+    Estrategia:
+    1. Insertar espacio después de .,;:!? antes de letra Latin
+    2. Insertar espacio antes de (/[+]= cuando precedido de letra
+    3. Insertar espacio después de )/] antes de letra Latin
+    4. Colapsar múltiples espacios
+    """
+    if not text:
+        return ""
+    # Latin chars: ASCII + Latin-1 Supplement + Latin Extended-A/B (covers macrons: ō, ū)
+    _LAT = 'A-Za-zÀ-ÿ\u0100-\u024F'
+    # After sentence-ending or comma punctuation, before Latin letter
+    clean = re.sub(r'([.!?;:,])([' + _LAT + '])', r'\1 \2', text)
+    # Before opening paren/bracket when preceded by letter (no space)
+    clean = re.sub(r'([' + _LAT + '])(\()', r'\1 \2', clean)
+    clean = re.sub(r'([' + _LAT + '])(\[)', r'\1 \2', clean)
+    # After closing paren/bracket, before Latin letter
+    clean = re.sub(r'(\))(\w)', r'\1 \2', clean)
+    clean = re.sub(r'(\])([' + _LAT + '])', r'\1 \2', clean)
+    # Before +, =, / operators when surrounded by letters (not in paths)
+    clean = re.sub(r'([' + _LAT + '])([+=])([' + _LAT + '])', r'\1 \2 \3', clean)
+    # Collapse multiple spaces
+    clean = re.sub(r'\s+', ' ', clean).strip()
+    return clean
+
+
+def _normalize_tts_spacing(text):
+    """Normaliza texto para TTS: agrega pausas naturales entre oraciones."""
+    if not text:
+        return ""
+    clean = _fix_word_spacing(text)
+    return clean
+
+
+def _split_sentences(text, lang='es'):
+    """Divide texto en oraciones para TTS secuencial.
+    
+    Kokoro funciona mejor con utterances de 100-200 tokens.
+    Textos largos suenan apresurados. Esta función:
+    1. Divide por puntuación de fin de oración (.!?)
+    2. Para japonés: también divide por 。！？
+    3. Filtra segmentos vacíos o muy cortos
+    """
+    if not text or len(text) < 10:
+        return [text] if text else []
+    
+    # Split by sentence-ending punctuation
+    if lang == 'ja':
+        # Japanese sentence endings
+        parts = re.split(r'([。！？!?])', text)
+    else:
+        parts = re.split(r'([.!?])', text)
+    
+    # Rebuild sentences: attach punctuation to previous segment
+    sentences = []
+    current = ''
+    for i, part in enumerate(parts):
+        if re.match(r'^[.!?。！？]$', part):
+            current += part
+            sent = current.strip()
+            if len(sent) > 3:
+                sentences.append(sent)
+            current = ''
+        else:
+            current += part.strip()  # strip leading spaces from next segment
+    final = current.strip()
+    if final and len(final) > 3:
+        sentences.append(final)
+    
+    return sentences if sentences else [text]
+
+
+def _make_silence_pcm(sr, duration_ms=300):
+    """Genera silencio PCM (int16) de la duración especificada."""
+    num_samples = int(sr * duration_ms / 1000)
+    return np.zeros(num_samples, dtype=np.int16).tobytes()
 
 
 # ── Kokoro-82M ONNX TTS (CPU, 0 VRAM) ──────────────────
@@ -208,13 +312,17 @@ HAVE_KOKORO = False
 _kokoro_instance = None
 KOKORO_LOCK = threading.Lock()
 
-# Map: B language (es/en) -> Kokoro ONNX lang_code + voice
+# Map: B language (es/en) -> Kokoro ONNX lang_code + voice + speed
+# Velocidades ajustadas para naturalidad:
+#   ES: 0.9x (más pausado, mejor pronunciación)
+#   EN: 1.0x (natural)
+#   JA: 0.9x (más claro para kanji)
 KOKORO_CONFIG = {
-    'es': {'lang': 'es', 'voice': 'ef_dora'},
-    'en': {'lang': 'en-us', 'voice': 'af_heart'},
-    'ja': {'lang': 'ja', 'voice': 'jf_alpha'},
-    'fr': {'lang': 'fr-fr', 'voice': 'ff_siwis'},
-    'de': {'lang': 'de', 'voice': 'bf_emma'},
+    'es': {'lang': 'es', 'voice': 'em_alex', 'speed': 0.9},
+    'en': {'lang': 'en-us', 'voice': 'af_heart', 'speed': 1.0},
+    'ja': {'lang': 'ja', 'voice': 'jf_alpha', 'speed': 0.9},
+    'fr': {'lang': 'fr-fr', 'voice': 'ff_siwis', 'speed': 1.0},
+    'de': {'lang': 'de', 'voice': 'bf_emma', 'speed': 1.0},
 }
 
 # Paths para modelos ONNX (descargados por setup.sh)
@@ -259,8 +367,9 @@ def _kokoro_synthesize(text, lang):
     if k is None:
         return None, None
     cfg = KOKORO_CONFIG.get(lang, KOKORO_CONFIG['es'])
+    speed = cfg.get('speed', 1.0)
     try:
-        audio, sr = k.create(text, voice=cfg['voice'], speed=1.0, lang=cfg['lang'])
+        audio, sr = k.create(text, voice=cfg['voice'], speed=speed, lang=cfg['lang'])
         return sr, audio
     except Exception as e:
         _safe_print(f"[B] [Kokoro-ONNX] Error sintetizando: {e}")
@@ -274,8 +383,9 @@ def _kokoro_synthesize_stream(text, lang):
     if k is None:
         return
     cfg = KOKORO_CONFIG.get(lang, KOKORO_CONFIG['es'])
+    speed = cfg.get('speed', 1.0)
     try:
-        audio, sr = k.create(text, voice=cfg['voice'], speed=1.0, lang=cfg['lang'])
+        audio, sr = k.create(text, voice=cfg['voice'], speed=speed, lang=cfg['lang'])
         if audio is None or len(audio) == 0:
             return
         audio_float32 = np.asarray(audio, dtype=np.float32)
@@ -534,61 +644,35 @@ class StatsCollector:
             pass
 
     def _collect_llama_stats(self):
+        """Check Ollama connectivity via /v1/models endpoint.
+        
+        Note: Ollama API doesn't expose per-request stats like llama-server's /slots,
+        so tokens_per_sec, context_used, etc. are estimated from request timing.
+        """
         try:
-            req = urllib.request.Request(f"{LLAMA_HOST}/slots")
+            req = urllib.request.Request(f"{LLAMA_HOST}/models")
             with urllib.request.urlopen(req, timeout=3) as resp:
-                slots = json.loads(resp.read().decode())
+                data = json.loads(resp.read().decode())
+                models = data.get("data", data.get("models", [])) if isinstance(data, dict) else []
+                is_alive = True
         except Exception:
-            with self.lock:
-                self.stats["llama_connected"] = False
-            return
-        if not isinstance(slots, list):
-            with self.lock:
-                self.stats["llama_connected"] = True
-            return
+            is_alive = False
+        
         with self.lock:
-            self.stats["llama_connected"] = True
-            self.stats["n_slots"] = len(slots)
-            self.stats["slots_detail"] = slots[:4]
-            total_decoded = 0
-            total_prompt = 0
-            max_ctx = 4096
-            processing = False
-            for s in slots:
-                ctx = s.get("n_ctx", 4096)
-                max_ctx = max(max_ctx, ctx)
-                if s.get("is_processing"):
-                    processing = True
-                nt = s.get("next_token", {})
-                if isinstance(nt, dict):
-                    total_decoded += nt.get("n_decoded", 0) or 0
-                elif isinstance(nt, list) and len(nt) > 0:
-                    total_decoded += nt[0].get("n_decoded", 0) or 0
-                total_prompt += s.get("n_prompt_tokens", 0) or 0
-            self.stats["is_processing"] = processing
-            self.stats["context_max"] = max_ctx
-            self.stats["context_used"] = total_decoded
-            self.stats["context_percent"] = round((total_decoded / max_ctx * 100) if max_ctx > 0 else 0, 1)
-            self.stats["tokens_generated"] = total_decoded
-            self.stats["prompt_tokens"] = total_prompt
+            self.stats["llama_connected"] = is_alive
+            if not is_alive:
+                self.stats["n_slots"] = 0
+                self.stats["slots_detail"] = []
+                return
+            self.stats["n_slots"] = 1
+            # Estimate tokens/sec from recent request timings
             now = time.time()
-            if total_decoded > self._last_decoded:
-                dt = now - self._last_time
-                if dt > 0:
-                    rate = (total_decoded - self._last_decoded) / dt
-                    self._tok_times.append(rate)
-                    if len(self._tok_times) > 5:
-                        self._tok_times.pop(0)
-                    self.stats["tokens_per_sec"] = round(sum(self._tok_times) / len(self._tok_times), 1)
-            elif not processing:
-                if self._tok_times:
-                    if now - self._last_time > 3.0:
-                        self._tok_times = []
-                        self.stats["tokens_per_sec"] = 0.0
-                else:
+            if self._tok_times:
+                avg = sum(self._tok_times) / len(self._tok_times)
+                self.stats["tokens_per_sec"] = round(avg, 1)
+                if now - self._last_time > 5.0:
+                    self._tok_times = []
                     self.stats["tokens_per_sec"] = 0.0
-            self._last_decoded = total_decoded
-            self._last_time = now
 
     def get_stats(self):
         with self.lock:
@@ -742,6 +826,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "n_predict": data.get("n_predict", 512),
                     "temperature": data.get("temperature", 0.7),
                     "stream": data.get("stream", False),
+                    "options": {"num_ctx": NUM_CTX},
                     "reasoning_format": "none",
                 }
             elif "messages" in data:
@@ -754,14 +839,17 @@ class Handler(SimpleHTTPRequestHandler):
                         if msg.get("role") == "user":
                             msg["content"] = f"{msg.get('content', '')}\n[Target language: {target_lang}]"
                             break
+                # Teacher: lower temperature (0.3) for accuracy, lower n_predict for speed
+                # Conversation: 0.7 for naturalness
                 chat_data = {
                     "model": OLLAMA_LLAMA_MODEL,
                     "messages": messages,
-                    "n_predict": data.get("n_predict", 512),
+                    "n_predict": data.get("n_predict", 384 if mode == 'teacher' else 512),
                     "temperature": data.get("temperature", {
-                        'teacher': 0.5, 'conversation': 0.7
+                        'teacher': 0.3, 'conversation': 0.7
                     }.get(mode, 0.7)),
                     "stream": data.get("stream", False),
+                    "options": {"num_ctx": NUM_CTX},
                     "reasoning_format": "none",
                 }
             else:
@@ -777,11 +865,12 @@ class Handler(SimpleHTTPRequestHandler):
                 chat_data = {
                     "model": OLLAMA_LLAMA_MODEL,
                     "messages": messages,
-                    "n_predict": data.get("n_predict", 1024),
+                    "n_predict": data.get("n_predict", 384 if mode == 'teacher' else 1024),
                     "temperature": data.get("temperature", {
-                        'teacher': 0.5, 'conversation': 0.7
+                        'teacher': 0.3, 'conversation': 0.7
                     }.get(mode, 0.7)),
                     "stream": data.get("stream", False),
+                    "options": {"num_ctx": NUM_CTX},
                     "reasoning_format": "none",
                 }
 
@@ -853,6 +942,11 @@ class Handler(SimpleHTTPRequestHandler):
                     cleaned = content
                 # Parse multi-output for teacher mode
                 parsed = parse_multi_output(cleaned) if mode == 'teacher' else {}
+                # Fix word spacing in TTS_READING and PRONUNCIATION
+                if parsed:
+                    for key in ('tts_reading', 'pronunciation', 'explanation', 'exercise', 'translation'):
+                        if parsed.get(key):
+                            parsed[key] = _fix_word_spacing(parsed[key])
                 if choices:
                     choices[0]["message"]["content"] = cleaned
                 # Add parsed output to result
@@ -895,27 +989,55 @@ class Handler(SimpleHTTPRequestHandler):
                 return
 
             # Sanitizar: eliminar caracteres no pronunciables (CJK, etc.)
-            text = _sanitize_tts_text(text)
-            if not text or len(text) < 2:
-                self._json_response({"error": "Texto sin caracteres pronunciables"})
-                return
-
-            # Determinar idioma
+            # Importante: pasar lang para preservar CJK en japonés
             if lang not in KOKORO_CONFIG:
                 detected = detect_language(text)
                 lang = detected if detected in KOKORO_CONFIG else 'es'
+            text = _sanitize_tts_text(text, lang)
+            if not text or len(text) < 2:
+                self._json_response({"error": "Texto sin caracteres pronunciables"})
+                return
 
             wav_data = None
             method = "kokoro"
             
             # ── 1. Kokoro-82M ONNX (primario, CPU) ──
+            # Para textos largos: secuencializar por oraciones con silencio entre ellas
+            # Para textos cortos (<100 chars): sintetizar de una vez
             if HAVE_KOKORO:
                 try:
-                    sr, audio = _kokoro_synthesize(text, lang)
-                    if audio is not None and len(audio) > 0:
-                        audio_float32 = np.asarray(audio, dtype=np.float32)
-                        audio_float32 = np.clip(audio_float32, -1.0, 1.0)
-                        full_int16 = (audio_float32 * 32767).astype(np.int16)
+                    sr_val = None
+                    if len(text) > 100:
+                        # Sequential TTS: split sentences, add silence gaps
+                        sentences = _split_sentences(text, lang)
+                        all_pcm = []
+                        for sent in sentences:
+                            s, audio = _kokoro_synthesize(sent, lang)
+                            if audio is not None and len(audio) > 0:
+                                sr_val = s
+                                a = np.asarray(audio, dtype=np.float32)
+                                a = np.clip(a, -1.0, 1.0)
+                                all_pcm.append((a * 32767).astype(np.int16))
+                                # Add 300ms silence between sentences
+                                if sent != sentences[-1]:
+                                    all_pcm.append(np.frombuffer(
+                                        _make_silence_pcm(sr_val, 300), dtype=np.int16))
+                        if all_pcm:
+                            full_int16 = np.concatenate(all_pcm)
+                            method = f"kokoro_sequential({len(sentences)})"
+                        else:
+                            full_int16 = None
+                    else:
+                        s, audio = _kokoro_synthesize(text, lang)
+                        sr_val = s
+                        if audio is not None and len(audio) > 0:
+                            a = np.asarray(audio, dtype=np.float32)
+                            full_int16 = (np.clip(a, -1.0, 1.0) * 32767).astype(np.int16)
+                            method = "kokoro_onnx"
+                        else:
+                            full_int16 = None
+                    
+                    if full_int16 is not None and len(full_int16) > 0:
                         data_size = len(full_int16) * 2
                         buf = bytearray(44 + data_size)
                         buf[0:4] = b'RIFF'
@@ -925,15 +1047,16 @@ class Handler(SimpleHTTPRequestHandler):
                         struct.pack_into('<I', buf, 16, 16)
                         struct.pack_into('<H', buf, 20, 1)
                         struct.pack_into('<H', buf, 22, 1)
-                        struct.pack_into('<I', buf, 24, sr)
-                        struct.pack_into('<I', buf, 28, sr * 2)
+                        struct.pack_into('<I', buf, 24, sr_val)
+                        struct.pack_into('<I', buf, 28, sr_val * 2)
                         struct.pack_into('<H', buf, 32, 2)
                         struct.pack_into('<H', buf, 34, 16)
                         buf[36:40] = b'data'
                         struct.pack_into('<I', buf, 40, data_size)
                         buf[44:44+data_size] = full_int16.tobytes()
                         wav_data = bytes(buf)
-                        method = "kokoro_onnx"
+                    if sr_val is None:
+                        sr_val = 24000  # Kokoro default
                 except Exception as e:
                     _safe_print(f"[B] [TTS] Kokoro-ONNX falló: {e}")
                     method = "kokoro_fallback"
@@ -989,14 +1112,14 @@ class Handler(SimpleHTTPRequestHandler):
                 self._json_response({"error": "texto vacio"})
                 return
             # Sanitizar: eliminar caracteres no pronunciables (CJK, etc.)
-            text = _sanitize_tts_text(text)
-            if not text or len(text) < 2:
-                self._json_response({"error": "Texto sin caracteres pronunciables"})
-                return
-
+            # Importante: pasar lang para preservar CJK en japonés
             if lang not in KOKORO_CONFIG:
                 detected = detect_language(text)
                 lang = detected if detected in KOKORO_CONFIG else 'es'
+            text = _sanitize_tts_text(text, lang)
+            if not text or len(text) < 2:
+                self._json_response({"error": "Texto sin caracteres pronunciables"})
+                return
 
             total_pcm = 0
             stream = None

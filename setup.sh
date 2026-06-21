@@ -4,8 +4,8 @@ set -e
 # ═══════════════════════════════════════════════════════════════
 #  Alex Voice — Setup Script for Linux (Ubuntu/Debian)
 # ═══════════════════════════════════════════════════════════════
-#  v3.1 Architecture (June 2026):
-#    - LLM: Ollama API → prometheus-orchestrator (Qwen3.5 4B Instruct, 262K ctx)
+#  v3.3 Architecture (June 2026):
+#    - LLM: Ollama API → prometheus-orchestrator (Qwen3.5 4B Instruct, 64K ctx)
 #    - TTS: Kokoro ONNX (CPU, 0 VRAM)
 #    - Translation: Helsinki-NLP Opus-MT via transformers (~100ms)
 #    - VAD: Silero VAD (CPU) — pre-filter before Whisper ASR
@@ -37,42 +37,12 @@ warn()  { echo -e "${YELLOW}[!]${NC} $1"; }
 err()   { echo -e "${RED}[✘]${NC} $1"; }
 
 echo ""
-echo "============================================="
-echo "    ⚡ Alex Voice — Linux Setup (v3.1)"
+echo "============================================="    echo "    ⚡ Alex Voice — Linux Setup (v3.3)"
 echo "============================================="
 echo ""
 
-# ═══════════════════════════════════════════════════════
-#  Helper: download Piper TTS model
-# ═══════════════════════════════════════════════════════
-download_piper() {
-    local url="$1"
-    local out="$2"
-    if [ -f "$out" ]; then
-        ok "$(basename $out) already downloaded"
-    else
-        info "Downloading $(basename $out)..."
-        curl -sL "$url" -o "$out" && ok "$(basename $out) downloaded" || warn "Failed to download $(basename $out)"
-    fi
-}
-
-# ═══════════════════════════════════════════════════════
-#  Helper: download file with progress
-# ═══════════════════════════════════════════════════════
-download_file() {
-    local url="$1"
-    local out="$2"
-    local label="$3"
-    if [ -f "$out" ]; then
-        ok "$label already downloaded"
-    else
-        info "Downloading $label..."
-        curl -sL --show-progress "$url" -o "$out" && ok "$label downloaded" || warn "Failed to download $label"
-    fi
-}
-
 # ── 1. System packages ────────────────────────────────────
-info "[1/6] Installing system packages..."
+info "[1/5] Installing system packages..."
 if command -v apt-get &>/dev/null; then
     sudo apt-get update -qq
     sudo apt-get install -y -qq \
@@ -95,7 +65,7 @@ else
 fi
 
 # ── 2. Python venv ────────────────────────────────────────
-info "[2/6] Setting up Python virtual environment..."
+info "[2/5] Setting up Python virtual environment..."
 if [ ! -d "venv" ]; then
     python3 -m venv venv
     ok "Virtual environment created"
@@ -107,7 +77,7 @@ pip install --upgrade pip -q
 ok "pip updated"
 
 # ── 3. Python dependencies ────────────────────────────────
-info "[3/6] Installing Python packages..."
+info "[3/5] Installing Python packages..."
 
 # PyTorch CUDA
 python3 -c "import torch; exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null && \
@@ -140,7 +110,7 @@ pip install huggingface-hub -q 2>&1 | tail -3
 ok "HuggingFace Hub installed"
 
 # ── 4. Ollama + prometheus-orchestrator ─────────────────────
-info "[4/6] Setting up Ollama + LLM model..."
+info "[4/5] Setting up Ollama + LLM model..."
 
 # Check if Ollama is installed
 if command -v ollama &>/dev/null; then
@@ -169,59 +139,9 @@ else
     ok "prometheus-orchestrator downloaded"
 fi
 
-# ── 5. Kokoro ONNX models ─────────────────────────────────
-info "[5/6] Downloading Kokoro ONNX models..."
-mkdir -p "$ROOT/models/onnx"
-
-download_file \
-    "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx" \
-    "$ROOT/models/onnx/kokoro-v1.0.onnx" \
-    "Kokoro ONNX model (~311 MB)"
-
-download_file \
-    "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin" \
-    "$ROOT/models/onnx/voices-v1.0.bin" \
-    "Kokoro ONNX voices (~27 MB)"
-
-# ── 6. Piper TTS models + Translation ──────────────────────
-info "[6/6] Downloading Piper TTS + translation models..."
-mkdir -p "$ROOT/models"
-
-download_piper \
-    "https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_ES/sharvard/medium/es_ES-sharvard-medium.onnx" \
-    "$ROOT/models/es_ES-sharvard-medium.onnx"
-
-download_piper \
-    "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx" \
-    "$ROOT/models/en_US-lessac-medium.onnx"
-
-# Pre-download translation models
-mkdir -p "$ROOT/models/translation"
-
-python3 -c "
-from transformers import MarianMTModel, MarianTokenizer
-import time
-
-models = [
-    'Helsinki-NLP/opus-mt-en-es',
-    'Helsinki-NLP/opus-mt-es-en',
-    'Helsinki-NLP/opus-mt-en-jap',  # Note: 'jap' not 'ja' for EN→JA
-    'Helsinki-NLP/opus-mt-ja-en',
-    'Helsinki-NLP/opus-mt-ja-es',
-]
-
-for model_name in models:
-    try:
-        t0 = time.time()
-        tok = MarianTokenizer.from_pretrained(model_name)
-        model = MarianMTModel.from_pretrained(model_name)
-        elapsed = (time.time() - t0)
-        print(f'  ✔ {model_name} ({elapsed:.1f}s)')
-    except Exception as e:
-        print(f'  ⚠ {model_name}: {e}')
-
-print('  ✔ All translation models ready (cached by transformers)')
-" 2>&1
+# ── 5. Download all model files via install_models.py ────
+info "[5/5] Downloading model files (Kokoro, Piper, Translation)..."
+python3 "$ROOT/scripts/install_models.py"
 
 # ═══════════════════════════════════════════════════════════════
 #  Verification
@@ -314,8 +234,8 @@ echo "   ℹ️  This setup no longer uses direct llama-server or GGUF files."
 echo "      You can free ~5GB by removing old files from v2:"
 echo "      rm -rf llama-server-bin models/qwen2.5-3b-instruct* models/qwen3.5-4b-instruct*"
 echo ""
-echo "   Architecture v3.1:"
-echo "     • LLM:      Ollama API → prometheus-orchestrator (Qwen3.5 4B Instruct, 262K ctx)"
+echo "   Architecture v3.3:"
+echo "     • LLM:      Ollama API → prometheus-orchestrator (Qwen3.5 4B Instruct, 64K ctx)"
 echo "     • TTS:      Kokoro ONNX (CPU, 0 VRAM) — 54 voices, 5 languages"
 echo "     • Translation: Opus-MT via transformers (~100ms)"
 echo "     • VAD:      Silero VAD (CPU) — pre-filter before Whisper ASR"
@@ -327,7 +247,7 @@ echo "     • Translator:          ASR (~1.5GB) + Opus-MT (GPU) = ~1.7GB"
 echo "     • TTS: 0 VRAM (CPU only — Kokoro ONNX + Piper)"
 echo ""
 echo "   Next steps:"
-echo "     1. ./alex-voice.sh    — Opens menu at http://localhost:5000"
+echo "     1. ./alex_voice_app.sh    — Opens menu at http://localhost:5000"
 echo "     2. source venv/bin/activate"
 echo "        python3 menu_server.py"
 echo ""

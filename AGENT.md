@@ -88,7 +88,7 @@ Running GPU commands directly in basher can crash the CLI process.
 - **Thinking:** No disponible → **Desactivado** (`reasoning_format: none`)
 - **menu_server.py:** Eliminado find_llama/find_model/start_llama → `check_ollama_alive()` + cleanup via API
 - **translator.py:** HTTP server ahora arranca ANTES de cargar modelos (no más HTML vacío en port 3003)
-- **launcher:** run.sh → alex-voice.sh que verifica Ollama + offload via API
+- **launcher:** run.sh → alex_voice_app.sh que verifica Ollama + offload via API
 
 ### TTS (All CPU, 0 VRAM)
 | Engine | Detail |
@@ -140,7 +140,7 @@ chmod +x setup.sh
 ollama pull prometheus-orchestrator
 
 # 4. Start the launcher
-./alex-voice.sh
+./alex_voice_app.sh
 # Or: source venv/bin/activate && python menu_server.py
 ```
 
@@ -149,7 +149,7 @@ ollama pull prometheus-orchestrator
 source venv/bin/activate
 
 # Option A: Launcher (recommended)
-./alex-voice.sh                      # Verifica Ollama → http://localhost:5000
+./alex_voice_app.sh                      # Verifica Ollama → http://localhost:5000
 
 # Option B: Direct menu
 python menu_server.py                # → http://localhost:5000

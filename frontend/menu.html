@@ -16,6 +16,7 @@
   --teacher:#6366f1;--teacherGlow:rgba(99,102,241,.08);
   --conv:#06b6d4;--convGlow:rgba(6,182,212,.08);
   --translator:#a855f7;--translatorGlow:rgba(168,85,247,.08);
+  --grammar:#10b981;--grammarGlow:rgba(16,185,129,.08);
   --radius:16px;--radius-sm:10px;
 }
 *{margin:0;padding:0;box-sizing:border-box}
@@ -94,6 +95,10 @@ body::before{
 .mode-card.translator:hover{border-color:rgba(168,85,247,.2);box-shadow:0 12px 40px rgba(168,85,247,.08)}
 .mode-card.translator:hover::after{opacity:1}
 
+.mode-card.grammar::after{background:var(--grammarGlow)}
+.mode-card.grammar:hover{border-color:rgba(16,185,129,.2);box-shadow:0 12px 40px rgba(16,185,129,.08)}
+.mode-card.grammar:hover::after{opacity:1}
+
 .mode-card .icon{
   font-size:36px;margin-bottom:14px;
   position:relative;display:inline-block;
@@ -105,6 +110,7 @@ body::before{
 .mode-card.teacher h3{color:#818cf8}
 .mode-card.conv h3{color:#22d3ee}
 .mode-card.translator h3{color:#c084fc}
+.mode-card.grammar h3{color:#34d399}
 
 .mode-card p{
   font-size:12px;color:var(--textDim);line-height:1.6;
@@ -158,6 +164,8 @@ body::before{
 .mode-card.conv .start-btn:hover{background:#0891b2;box-shadow:0 4px 16px rgba(6,182,212,.3)}
 .mode-card.translator .start-btn{background:#a855f7;color:#fff}
 .mode-card.translator .start-btn:hover{background:#9333ea;box-shadow:0 4px 16px rgba(168,85,247,.3)}
+.mode-card.grammar .start-btn{background:#10b981;color:#fff}
+.mode-card.grammar .start-btn:hover{background:#059669;box-shadow:0 4px 16px rgba(16,185,129,.3)}
 .start-btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
 
 /* Status bar */
@@ -274,7 +282,7 @@ body::before{
       <div class="resources">
         <span>🧠 Qwen3.5-4B</span>
         <span>🎙 Kokoro TTS</span>
-        <span>💾 262K ctx</span>
+        <span>💾 64K ctx</span>
       </div>
       <button class="start-btn" id="btnConv">Iniciar</button>
     </div>
@@ -291,6 +299,19 @@ body::before{
       </div>
       <button class="start-btn" id="btnTranslator">Iniciar</button>
     </div>
+
+    <div class="mode-card grammar" role="button" tabindex="0" onclick="startMode('grammar')" onkeydown="if(event.key==='Enter')startMode('grammar')">
+      <div class="status-badge" id="badgeGrammar"></div>
+      <div class="icon">📝</div>
+      <h3>Grammar</h3>
+      <p>Ejercicios interactivos con retroalimentación y seguimiento de progreso</p>
+      <div class="resources">
+        <span>🧠 Qwen3.5-4B</span>
+        <span>💾 SQLite</span>
+        <span>📊 Progreso</span>
+      </div>
+      <button class="start-btn" id="btnGrammar">Iniciar</button>
+    </div>
   </div>
 
   <div class="status-bar">
@@ -304,7 +325,7 @@ body::before{
   </div>
 
   <div class="shortcuts">
-    <kbd>1</kbd> Teacher · <kbd>2</kbd> Conversación · <kbd>3</kbd> Traductor · <kbd>Esc</kbd> Detener
+    <kbd>1</kbd> Teacher · <kbd>2</kbd> Conversación · <kbd>3</kbd> Traductor · <kbd>4</kbd> Grammar · <kbd>Esc</kbd> Detener
   </div>
 </div>
 
@@ -347,14 +368,14 @@ async function pollStatus() {
 }
 
 function modeLabel(m) {
-  return {'teacher':'🎓 Teacher','conv':'💬 Conversación','translator':'🌍 Traductor'}[m] || m;
+  return {'teacher':'🎓 Teacher','conv':'💬 Conversación','translator':'🌍 Traductor','grammar':'📝 Grammar'}[m] || m;
 }
 
 function updateCards(mode) {
   document.querySelectorAll('.mode-card').forEach(c => c.style.opacity = '0.5');
   resetBadges();
-  const cardClass = {teacher:'teacher',conv:'conv',translator:'translator'}[mode];
-  const badgeKey = {teacher:'Teacher',conv:'Conv',translator:'Translator'}[mode];
+  const cardClass = {teacher:'teacher',conv:'conv',translator:'translator',grammar:'grammar'}[mode];
+  const badgeKey = {teacher:'Teacher',conv:'Conv',translator:'Translator',grammar:'Grammar'}[mode];
   if (cardClass) {
     document.querySelector('.mode-card.' + cardClass).style.opacity = '1';
     document.getElementById('badge' + badgeKey).className = 'status-badge running';
@@ -363,7 +384,7 @@ function updateCards(mode) {
 }
 
 function resetBadges() {
-  ['Teacher','Conv','Translator'].forEach(id => {
+  ['Teacher','Conv','Translator','Grammar'].forEach(id => {
     document.getElementById('badge' + id).className = 'status-badge';
   });
 }
@@ -371,7 +392,7 @@ function resetBadges() {
 function resetCards() {
   document.querySelectorAll('.mode-card').forEach(c => c.style.opacity = '1');
   resetBadges();
-  ['btnTeacher','btnConv','btnTranslator'].forEach(id => {
+  ['btnTeacher','btnConv','btnTranslator','btnGrammar'].forEach(id => {
     document.getElementById(id).disabled = false;
     document.getElementById(id).textContent = 'Iniciar';
   });
@@ -426,6 +447,7 @@ function showLoading(mode) {
     teacher: {title: '🎓 Iniciando Teacher', desc: 'Cargando Qwen3.5-4B en GPU + Kokoro TTS...'},
     conv: {title: '💬 Iniciando Conversación', desc: 'Cargando Qwen3.5-4B en GPU + Kokoro TTS...'},
     translator: {title: '🌍 Iniciando Traductor', desc: 'Cargando ASR + Opus-MT MarianMT + Kokoro ONNX...'},
+    grammar: {title: '📝 Iniciando Grammar', desc: 'Inicializando base de datos SQLite + ejercicios...'},
   };
   document.getElementById('loadTitle').textContent = labels[mode]?.title || 'Iniciando...';
   document.getElementById('loadDesc').textContent = labels[mode]?.desc || 'Cargando...';
@@ -445,6 +467,7 @@ document.addEventListener('keydown', function(e) {
   if (e.key === '1') startMode('teacher');
   else if (e.key === '2') startMode('conv');
   else if (e.key === '3') startMode('translator');
+  else if (e.key === '4') startMode('grammar');
   else if (e.key === 'Escape') stopMode();
 });
 

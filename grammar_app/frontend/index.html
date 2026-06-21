@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Grammar — Alex Voice</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- Login Screen -->
+<div id="screen-login" class="screen active">
+  <div class="login-container">
+    <div class="login-logo">📝</div>
+    <h1>Grammar</h1>
+    <p class="login-sub">Aprende gramática con ejercicios interactivos</p>
+    <div class="login-form">
+      <input type="text" id="login-username" placeholder="Tu nombre de usuario" autocomplete="off">
+      <select id="login-target-lang">
+        <option value="ja">🇯🇵 Japonés</option>
+        <option value="es">🇪🇸 Español</option>
+        <option value="en">🇺🇸 Inglés</option>
+      </select>
+      <button id="login-btn" onclick="handleLogin()">Comenzar</button>
+      <p id="login-error" class="error-text"></p>
+    </div>
+  </div>
+</div>
+
+<!-- Dashboard Screen -->
+<div id="screen-dashboard" class="screen">
+  <div class="dashboard">
+    <!-- Top Bar -->
+    <div class="topbar">
+      <div class="topbar-left">
+        <span class="topbar-level" id="dash-level">Lv 1</span>
+        <div class="topbar-xp">
+          <span class="xp-icon">⭐</span>
+          <span id="dash-xp">0</span> XP
+        </div>
+      </div>
+      <div class="topbar-right">
+        <div class="hearts-display">
+          <span>❤️</span>
+          <span id="dash-hearts">5</span>
+        </div>
+        <div class="streak-display">
+          <span>🔥</span>
+          <span id="dash-streak">0</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Skill Tree -->
+    <div class="skill-tree" id="skill-tree">
+      <!-- Units and lessons rendered by JS -->
+    </div>
+
+    <!-- Bottom Nav -->
+    <div class="bottom-nav">
+      <button class="nav-btn active" onclick="showTab('tree')">
+        <span class="nav-icon">🌳</span>
+        <span class="nav-label">Aprender</span>
+      </button>
+      <button class="nav-btn" onclick="showTab('practice')">
+        <span class="nav-icon">🔄</span>
+        <span class="nav-label">Practicar</span>
+      </button>
+      <button class="nav-btn" onclick="showTab('profile')">
+        <span class="nav-icon">👤</span>
+        <span class="nav-label">Perfil</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Lesson Screen -->
+<div id="screen-lesson" class="screen">
+  <div class="lesson-container">
+    <div class="lesson-topbar">
+      <button class="back-btn" onclick="exitLesson()">✕</button>
+      <div class="lesson-progress-bar">
+        <div class="lesson-progress-fill" id="lesson-progress-fill"></div>
+      </div>
+      <div class="lesson-hearts">
+        <span>❤️</span>
+        <span id="lesson-hearts">5</span>
+      </div>
+    </div>
+    
+    <div class="exercise-area" id="exercise-area">
+      <!-- Exercise rendered by JS -->
+    </div>
+    
+    <div class="lesson-footer">
+      <div class="exercise-feedback" id="exercise-feedback"></div>
+      <button class="check-btn" id="check-btn" onclick="checkAnswer()">Comprobar</button>
+      <button class="continue-btn hidden" id="continue-btn" onclick="nextExercise()">Continuar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Lesson Complete Screen -->
+<div id="screen-complete" class="screen">
+  <div class="complete-container">
+    <div class="complete-icon">🎉</div>
+    <h2>¡Lección completada!</h2>
+    <div class="complete-stats">
+      <div class="stat">
+        <span class="stat-value" id="complete-xp">+0</span>
+        <span class="stat-label">XP ganados</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="complete-accuracy">0%</span>
+        <span class="stat-label">Precisión</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="complete-streak">0</span>
+        <span class="stat-label">🔥 Racha</span>
+      </div>
+    </div>
+    <button class="continue-btn" onclick="backToDashboard()">Continuar</button>
+  </div>
+</div>
+
+<!-- Profile Screen -->
+<div id="screen-profile" class="screen">
+  <div class="profile-container">
+    <div class="profile-header">
+      <div class="profile-avatar" id="profile-avatar">👤</div>
+      <h2 id="profile-name">Usuario</h2>
+      <p class="profile-level" id="profile-level">Nivel 1</p>
+    </div>
+    <div class="profile-stats" id="profile-stats">
+      <!-- Stats rendered by JS -->
+    </div>
+    <div class="profile-leaderboard" id="profile-leaderboard">
+      <!-- Leaderboard rendered by JS -->
+    </div>
+    <button class="logout-btn" onclick="handleLogout()">Cerrar sesión</button>
+  </div>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
