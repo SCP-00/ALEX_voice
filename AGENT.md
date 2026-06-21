@@ -1,4 +1,6 @@
-# 🛡️ LEY ABSOLUTA — GPU COMMANDS MUST USE TMUX
+# 🛡️ Alex Voice — AI Agent Guide (v3.3.1)
+
+## Critical Rules
 
 ## 🔴 CRITICAL RULE
 
