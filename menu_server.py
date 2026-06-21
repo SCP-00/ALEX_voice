@@ -26,8 +26,9 @@ LLAMA_PORT = 8081
 LLAMA_HOST = f"http://localhost:{LLAMA_PORT}"
 
 PYTHON = sys.executable
-LLAMA_EXE = PROJECT_ROOT / "llama-server-bin" / "llama-server.exe"
-MODEL_DIR = PROJECT_ROOT / "models"
+# Ollama API: prometheus-orchestrator (Qwen3.5 4B Instruct)
+OLLAMA_HOST = "http://localhost:11434/v1"
+OLLAMA_MODEL = "prometheus-orchestrator"
 
 # ── Procesos activos ──
 _running = {}   # nombre -> subprocess.Popen
@@ -41,54 +42,22 @@ def eprint(msg):
 def log(msg):
     eprint(f"[Menu] {msg}")
 
-# ── Buscar modelo GGUF ──
-def find_model():
-    if not MODEL_DIR.exists():
-        return None
-    models = sorted(MODEL_DIR.glob("*.gguf"))
-    return models[0] if models else None
-
-def find_llama():
-    if LLAMA_EXE.exists():
-        return LLAMA_EXE
-    # Fallback: solo revisar paths conocidos
-    for path in [
-        PROJECT_ROOT / "llama.cpp" / "llama-server.exe",
-        Path.home() / "Documents" / "llama-b9479-bin-win-cuda-13.3-x64" / "llama-server.exe",
-    ]:
-        if path.exists():
-            return path
-    return None
-
-def check_llama_alive():
+def check_ollama_alive():
+    """Verificar si Ollama API responde."""
     try:
-        req = urllib.request.Request(f"{LLAMA_HOST}/slots")
-        with urllib.request.urlopen(req, timeout=2) as r:
-            return True
-    except:
+        req = urllib.request.Request(f"{OLLAMA_HOST}/models")
+        with urllib.request.urlopen(req, timeout=3) as r:
+            if r.status == 200:
+                return True
         return False
-
-def wait_for_llama(timeout=120):
-    t0 = time.time()
-    while time.time() - t0 < timeout:
-        if check_llama_alive():
+    except urllib.error.HTTPError as e:
+        # 404 significa que el endpoint /models no existe en algunas versiones de Ollama
+        # pero el servidor está vivo
+        if e.code == 404:
             return True
-        time.sleep(1)
-    return False
-
-def kill_process(name):
-    global _current_mode
-    with _lock:
-        proc = _running.pop(name, None)
-        if proc and proc.poll() is None:
-            try:
-                proc.terminate()
-                proc.wait(timeout=5)
-            except:
-                try: proc.kill()
-                except: pass
-        if not _running:
-            _current_mode = None
+        return False
+    except Exception:
+        return False
 
 def kill_all():
     global _current_mode
@@ -103,40 +72,26 @@ def kill_all():
                     except: pass
         _running.clear()
         _current_mode = None
-    # Matar llama-server si está vivo
+    # Liberar modelo de Ollama (descargar de VRAM) usando /api/generate
     try:
-        subprocess.run(["taskkill", "-f", "-im", "llama-server.exe"],
-                       capture_output=True, timeout=5)
+        req = urllib.request.Request(
+            "http://localhost:11434/api/generate",
+            data=json.dumps({"model": OLLAMA_MODEL, "keep_alive": "0m"}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=3):
+            pass
+    except Exception:
+        pass
+    # Matar procesos hij@s (server.py, translator.py)
+    try:
+        subprocess.run(["pkill", "-f", "python.*server.py"], capture_output=True, timeout=5)
     except:
         pass
-
-def start_llama(model_path):
-    if check_llama_alive():
-        log("llama-server ya está corriendo")
-        return True
-    exe = find_llama()
-    if not exe:
-        log("llama-server.exe no encontrado")
-        return False
-    args = [
-        str(exe), "-m", str(model_path),
-        "--host", "0.0.0.0", "--port", str(LLAMA_PORT),
-        "-ngl", "99", "-c", "8192",
-        "--chat-template", "chatml", "--no-warmup", "--no-ui",
-    ]
     try:
-        proc = subprocess.Popen(args, creationflags=subprocess.CREATE_NO_WINDOW)
-        with _lock:
-            _running["llama-server"] = proc
-        log("llama-server iniciado, esperando carga del modelo...")
-        if wait_for_llama():
-            log("llama-server listo")
-            return True
-        log("Tiempo de espera agotado")
-        return False
-    except Exception as e:
-        log(f"Error iniciando llama-server: {e}")
-        return False
+        subprocess.run(["pkill", "-f", "python.*translator.py"], capture_output=True, timeout=5)
+    except:
+        pass
 
 def start_server(script, name, port, mode):
     global _current_mode
@@ -146,11 +101,15 @@ def start_server(script, name, port, mode):
         return False
     env = os.environ.copy()
     env["PLAN_B_PORT"] = str(port)
+    env["OLLAMA_LLAMA_MODEL"] = OLLAMA_MODEL
+    env["LLAMA_HOST"] = OLLAMA_HOST
     try:
+        _kwargs = {"env": env}
+        if sys.platform == "win32":
+            _kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
         proc = subprocess.Popen(
             [PYTHON, str(path)],
-            creationflags=subprocess.CREATE_NO_WINDOW,
-            env=env,
+            **_kwargs,
         )
         with _lock:
             _running[name] = proc
@@ -179,7 +138,7 @@ class MenuHandler(SimpleHTTPRequestHandler):
             self._json({
                 "mode": _current_mode,
                 "servers": list(_running.keys()),
-                "llama_alive": check_llama_alive(),
+                "ollama_alive": check_ollama_alive(),
             })
         else:
             super().do_GET()
@@ -217,13 +176,8 @@ class MenuHandler(SimpleHTTPRequestHandler):
             return
 
         if name == "conv":
-            model = find_model()
-            if not model:
-                self._json({"error": "No se encontró modelo GGUF. Ejecuta setup.bat primero."})
-                return
-            llama_ok = start_llama(model)
-            if not llama_ok:
-                self._json({"error": "llama-server no pudo cargar el modelo en GPU"})
+            if not check_ollama_alive():
+                self._json({"error": "Ollama no está corriendo. Ejecuta 'ollama serve' primero."})
                 return
             ok = start_server("conv_server.py", "conv", 3001, "conversation")
             if ok:
@@ -235,16 +189,9 @@ class MenuHandler(SimpleHTTPRequestHandler):
                 self._json({"error": "No se pudo iniciar Conversación"})
             return
 
-        # Teacher: necesita llama-server
-        model = find_model()
-        if not model:
-            self._json({"error": "No se encontró modelo GGUF. Ejecuta setup.bat primero."})
-            return
-
-        # Iniciar llama-server (blocking — espera hasta que el modelo cargue en GPU)
-        llama_ok = start_llama(model)
-        if not llama_ok:
-            self._json({"error": "llama-server no pudo cargar el modelo en GPU"})
+        # Teacher: necesita Ollama con prometheus-orchestrator
+        if not check_ollama_alive():
+            self._json({"error": "Ollama no está corriendo. Ejecuta 'ollama serve' primero."})
             return
 
         # Iniciar server.py

@@ -14,9 +14,11 @@ without duplicating any code.
 
 import os, sys
 
-# Configurar modo conversación + puerto 3001
+# Configurar modo conversación + puerto 3001 + modelo instruct
 os.environ["CONV_MODE"] = "conversation"
 os.environ["PLAN_B_PORT"] = "3001"
+os.environ["OLLAMA_LLAMA_MODEL"] = "prometheus-orchestrator"
+os.environ["LLAMA_HOST"] = "http://localhost:11434/v1"
 
 # Pasar argumentos a server.py
 sys.argv = [sys.argv[0], "--mode", "conversation", "--port", "3001"]

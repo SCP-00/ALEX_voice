@@ -8,6 +8,7 @@ Corre en puerto 3000 por defecto.
 import json
 import os
 import re
+import sys
 import base64
 import struct
 import time
@@ -16,6 +17,7 @@ import subprocess
 import urllib.request
 import urllib.error
 import numpy as np
+import torch
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from collections import OrderedDict
@@ -26,8 +28,39 @@ _TTS_SAFE_RE = re.compile(
     r"\u0300-\u036F\s0-9.,!?;:\'\"¡¿\(\)\[\]\{\}\-–—…&@#%*+=/<>~`$€£¥°]"
 )
 
+# Regex para thinking tags del LLM (Qwen thinking mode)
+_THINKING_RE = re.compile(r'<think>[\s\S]*?</think>', re.DOTALL)
+
+# Simple pattern: strip ALL emojis (Unicode ranges: dingbats, misc symbols, all supplementary)
+_SIMPLE_EMOJI_RE = re.compile(
+    '['
+    '\u2600-\u27BF'    # misc symbols, dingbats
+    '\uFE00-\uFE0F'    # variation selectors
+    '\U0001F000-\U0001FFFF'  # all supplementary emojis (15K+)
+    '\u200D'            # zero-width joiner (ZWJ sequences)
+    ']+' ,
+    re.UNICODE,
+)
+
+# Common Spanish/English emoji description words that TTS reads aloud as 'carita sonriente'
+_EMOJI_WORD_RE = re.compile(
+    r'\b(carita[s]?|emojis?|sonrisa[s]?|guiño[s]?|corazón|estrella[s]?|fuego|clap|wave|'
+    r'smiley|smile|frown|wink|heart[s]?|star[s]?|fire)\b',
+    re.IGNORECASE,
+)
+
 # ── Shared prompts module ─────────────────────────────────
 from prompts import parse_multi_output, get_tts_text, get_system_prompt, build_llm_messages, detect_language_simple
+
+# ── Cutlet romanization (Japanese) ────────────────────────
+# NOTA: _safe_print se define después; se usa print directo aquí
+try:
+    import cutlet as _cutlet_mod
+    _CUTLET = _cutlet_mod.Cutlet()
+    _HAVE_CUTLET = True
+except Exception:
+    _CUTLET = None
+    _HAVE_CUTLET = False
 
 # ── LRU Cache ──────────────────────────────────────────────
 class ResponseCache:
@@ -84,7 +117,10 @@ class ResponseCache:
             }
 
 # ── Config ─────────────────────────────────────────────────
-LLAMA_HOST = os.environ.get("LLAMA_HOST", "http://localhost:8081")
+# Modelo LLM: prometheus-orchestrator (Qwen3.5 4B Instruct) via Ollama API
+# Cambia a http://localhost:8081 si usas llama-server directo con GGUF
+OLLAMA_LLAMA_MODEL = os.environ.get("OLLAMA_LLAMA_MODEL", "prometheus-orchestrator")
+LLAMA_HOST = os.environ.get("LLAMA_HOST", "http://localhost:11434/v1")
 
 # Soporte para --mode y --port desde línea de comandos (conv_server.py wrapper)
 SERVER_MODE = os.environ.get("CONV_MODE", "")
@@ -131,90 +167,123 @@ except Exception:
 
 # ── Sanitizador de texto para TTS ───────────────────────────
 def _sanitize_tts_text(text):
-    """Elimina caracteres no pronunciables por Kokoro/Piper.
+    """Elimina todo lo que no debe ser leído en voz alta por TTS.
     
-    Kokoro-82M solo soporta Latin + extensiones españolas.
-    Caracteres CJK, Árabe, Cirílico, etc. causan "Caracter japones"
-    o similar. Esta función los reemplaza con espacios.
+    Pasos:
+    1. Eliminar thinking tags (reasoning chain del LLM)
+    2. Eliminar emojis Unicode
+    3. Eliminar descripciones de emojis ("carita sonriente", "emoji")
+    4. Eliminar caracteres CJK/Árabe/Cirílico (Kokoro solo soporta Latin)
+    5. Normalizar espacios
     """
     if not text:
         return ""
-    safe = _TTS_SAFE_RE.sub(" ", text)
-    safe = re.sub(r"\s+", " ", safe).strip()
-    return safe
+    
+    # 1. Strip thinking tags (<think>...</think>)
+    clean = _THINKING_RE.sub('', text)
+    
+    # 2. Strip all emojis
+    clean = _SIMPLE_EMOJI_RE.sub('', clean)
+    
+    # 3. Strip emoji description words
+    clean = _EMOJI_WORD_RE.sub('', clean)
+    
+    # 4. Strip non-pronounceable characters (CJK, etc.)
+    clean = _TTS_SAFE_RE.sub(' ', clean)
+    
+    # 5. Collapse multiple spaces and strip
+    clean = re.sub(r'\s+', ' ', clean).strip()
+    
+    # 6. Remove orphaned punctuation at start/end
+    clean = re.sub(r'^[,;:\s]+', '', clean)
+    clean = re.sub(r'[,;:\s]+$', '', clean)
+    
+    return clean
 
 
-# ── Kokoro-82M TTS ─────────────────────────────────────────
+# ── Kokoro-82M ONNX TTS (CPU, 0 VRAM) ──────────────────
+# Reemplaza el Kokoro pip que depende de spacy/blis (incompatible con Python 3.13)
+# Usa kokoro-onnx: misma calidad, ejecución 100% CPU, sin dependencias pesadas
 HAVE_KOKORO = False
-KOKORO_PIPELINES = {}  # lang_code -> KPipeline instance (lazy-loaded)
+_kokoro_instance = None
 KOKORO_LOCK = threading.Lock()
 
-try:
-    from kokoro import KPipeline
-    HAVE_KOKORO = True
-except ImportError:
-    _safe_print("[B] [!] kokoro no instalado. pip install kokoro")
-
-# Map: B language (es/en) -> Kokoro lang_code + voice
+# Map: B language (es/en) -> Kokoro ONNX lang_code + voice
 KOKORO_CONFIG = {
-    'es': {'code': 'e', 'voice': 'ef_dora'},
-    'en': {'code': 'a', 'voice': 'af_heart'},
+    'es': {'lang': 'es', 'voice': 'ef_dora'},
+    'en': {'lang': 'en-us', 'voice': 'af_heart'},
+    'ja': {'lang': 'ja', 'voice': 'jf_alpha'},
+    'fr': {'lang': 'fr-fr', 'voice': 'ff_siwis'},
+    'de': {'lang': 'de', 'voice': 'bf_emma'},
 }
 
+# Paths para modelos ONNX (descargados por setup.sh)
+PROJECT_ROOT_DIR = Path(__file__).parent.resolve()
+KOKORO_MODEL_PATH = PROJECT_ROOT_DIR / "models" / "onnx" / "kokoro-v1.0.onnx"
+KOKORO_VOICES_PATH = PROJECT_ROOT_DIR / "models" / "onnx" / "voices-v1.0.bin"
 
-def _get_kokoro_pipeline(lang):
-    """Obtiene o carga lazy un pipeline Kokoro por idioma.
-    Retorna (pipeline, voice_name) o (None, None).
+
+def _get_kokoro_instance():
+    """Lazy-load singleton de Kokoro ONNX.
+    Retorna instancia de Kokoro o None.
     """
-    global KOKORO_PIPELINES
-    if lang not in KOKORO_CONFIG:
-        return None, None
-    cfg = KOKORO_CONFIG[lang]
-    code = cfg['code']
-    voice = cfg['voice']
-    
-    if code in KOKORO_PIPELINES:
-        return KOKORO_PIPELINES[code], voice
-    
+    global _kokoro_instance, HAVE_KOKORO
+    if _kokoro_instance is not None:
+        return _kokoro_instance
     with KOKORO_LOCK:
-        if code in KOKORO_PIPELINES:
-            return KOKORO_PIPELINES[code], voice
+        if _kokoro_instance is not None:
+            return _kokoro_instance
         try:
+            from kokoro_onnx import Kokoro
+            if not KOKORO_MODEL_PATH.exists() or not KOKORO_VOICES_PATH.exists():
+                _safe_print(f"[B] [Kokoro-ONNX] Modelos no encontrados en {KOKORO_MODEL_PATH.parent}")
+                return None
             t0 = time.time()
-            pipeline = KPipeline(lang_code=code, repo_id='hexgrad/Kokoro-82M')
+            _kokoro_instance = Kokoro(
+                str(KOKORO_MODEL_PATH),
+                str(KOKORO_VOICES_PATH),
+            )
             elapsed = (time.time() - t0) * 1000
-            _safe_print(f"[B] [Kokoro] {lang} pipeline cargado en {elapsed:.0f}ms")
-            KOKORO_PIPELINES[code] = pipeline
-            return pipeline, voice
+            voices = _kokoro_instance.get_voices()
+            _safe_print(f"[B] [Kokoro-ONNX] Cargado en {elapsed:.0f}ms — {len(voices)} voces")
+            HAVE_KOKORO = True
+            return _kokoro_instance
         except Exception as e:
-            _safe_print(f"[B] [Kokoro] Error cargando {lang}: {e}")
-            return None, None
+            _safe_print(f"[B] [Kokoro-ONNX] Error cargando: {e}")
+            return None
+
+
+def _kokoro_synthesize(text, lang):
+    """Sintetiza texto con Kokoro ONNX. Retorna (sample_rate, audio_float32) o (None, None)."""
+    k = _get_kokoro_instance()
+    if k is None:
+        return None, None
+    cfg = KOKORO_CONFIG.get(lang, KOKORO_CONFIG['es'])
+    try:
+        audio, sr = k.create(text, voice=cfg['voice'], speed=1.0, lang=cfg['lang'])
+        return sr, audio
+    except Exception as e:
+        _safe_print(f"[B] [Kokoro-ONNX] Error sintetizando: {e}")
+        return None, None
 
 
 def _kokoro_synthesize_stream(text, lang):
-    """Generator: sintetiza texto con Kokoro y produce tuplas (sample_rate, pcm_bytes).
-    
-    Kokoro genera audio a 24kHz en chunks por segmento de texto.
-    Cada chunk se entrega en cuanto está listo (streaming real).
-    Retorna (sample_rate, pcm_int16_bytes, is_last=False).
-    """
-    pipeline, voice = _get_kokoro_pipeline(lang)
-    if pipeline is None:
+    """Generator: sintetiza texto con Kokoro ONNX y produce tuplas (sample_rate, pcm_bytes).
+    Retorna tuplas (sample_rate, pcm_int16_bytes)."""
+    k = _get_kokoro_instance()
+    if k is None:
         return
-    
+    cfg = KOKORO_CONFIG.get(lang, KOKORO_CONFIG['es'])
     try:
-        generator = pipeline(text, voice=voice, speed=1)
-        for gs, ps, audio in generator:
-            if audio is None or len(audio) == 0:
-                continue
-            # audio es float32 numpy a 24kHz → convertir a int16
-            audio_float32 = np.asarray(audio, dtype=np.float32)
-            # Clamp seguro a [-1, 1] antes de convertir
-            audio_float32 = np.clip(audio_float32, -1.0, 1.0)
-            audio_int16 = (audio_float32 * 32767).astype(np.int16)
-            yield (24000, audio_int16.tobytes())
+        audio, sr = k.create(text, voice=cfg['voice'], speed=1.0, lang=cfg['lang'])
+        if audio is None or len(audio) == 0:
+            return
+        audio_float32 = np.asarray(audio, dtype=np.float32)
+        audio_float32 = np.clip(audio_float32, -1.0, 1.0)
+        audio_int16 = (audio_float32 * 32767).astype(np.int16)
+        yield (sr, audio_int16.tobytes())
     except Exception as e:
-        _safe_print(f"[B] [Kokoro] Stream error: {e}")
+        _safe_print(f"[B] [Kokoro-ONNX] Stream error: {e}")
 
 
 # ── Piper TTS Python API ───────────────────────────────────
@@ -340,8 +409,10 @@ def _get_asr_model(model_name):
             return _asr_models[model_name]
         try:
             t0 = time.time()
-            model = WhisperModel(model_name, device="cpu", compute_type="int8")
-            _safe_print(f"[B] [ASR] faster-whisper {model_name} cargado en {(time.time()-t0)*1000:.0f}ms")
+            # Fix: usar GPU explícitamente (antes estaba hardcoded a "cpu")
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            model = WhisperModel(model_name, device=device, compute_type="int8")
+            _safe_print(f"[B] [ASR] faster-whisper {model_name} cargado en GPU en {(time.time()-t0)*1000:.0f}ms")
             _asr_models[model_name] = model
             return model
         except Exception as e:
@@ -362,6 +433,32 @@ def _asr_transcribe(audio_bytes, language="auto", model_name="small"):
         if len(pcm_int16) == 0:
             return None, None, "Audio vacío"
         pcm_float32 = pcm_int16.astype(np.float32) / 32768.0
+
+        # Silero VAD: pre-filtrar segmentos de silencio antes de ASR
+        try:
+            from silero_vad import load_silero_vad as _load_vad, get_speech_timestamps as _get_speech_ts
+            if not hasattr(_asr_transcribe, '_vad_model'):
+                _asr_transcribe._vad_model = _load_vad()
+                _asr_transcribe._vad_lock = threading.Lock()
+            with _asr_transcribe._vad_lock:
+                wav_tensor = torch.tensor(pcm_float32, dtype=torch.float32)
+                speech_timestamps = _get_speech_ts(
+                    wav_tensor, _asr_transcribe._vad_model,
+                    sampling_rate=16000,
+                    min_silence_duration_ms=500,
+                    speech_pad_ms=200,
+                )
+                if speech_timestamps:
+                    # Extraer solo segmentos con habla
+                    speech_segments = []
+                    for ts in speech_timestamps:
+                        speech_segments.append(pcm_float32[ts['start']:ts['end']])
+                    if speech_segments:
+                        pcm_float32 = np.concatenate(speech_segments)
+                        _safe_print(f"[B] [VAD] {len(speech_timestamps)} segmentos de habla detectados")
+        except Exception:
+            pass  # Silero VAD es opcional — si falla, usar Whisper VAD interno
+
         lang_code = None if language == "auto" else language
         with _asr_lock:
             segments, info = model.transcribe(
@@ -586,8 +683,12 @@ class Handler(SimpleHTTPRequestHandler):
         elif self.path == "/api/cache/clear":
             _response_cache.invalidate()
             self._json_response({"ok": True})
-        elif self.path in ("/", "/index.html"):
-            self._serve_file("index.html")
+        elif self.path in ("/", "/index.html", "/conv.html"):
+            # Servir el HTML correcto según el modo
+            if SERVER_MODE == "conversation":
+                self._serve_file("conv.html")
+            else:
+                self._serve_file("index.html")
         else:
             super().do_GET()
 
@@ -637,9 +738,11 @@ class Handler(SimpleHTTPRequestHandler):
                         messages.append({"role": role, "content": content})
                 chat_data = {
                     "messages": messages,
+                    "model": OLLAMA_LLAMA_MODEL,
                     "n_predict": data.get("n_predict", 512),
                     "temperature": data.get("temperature", 0.7),
                     "stream": data.get("stream", False),
+                    "reasoning_format": "none",
                 }
             elif "messages" in data:
                 messages = list(data.get("messages") or [])
@@ -652,12 +755,14 @@ class Handler(SimpleHTTPRequestHandler):
                             msg["content"] = f"{msg.get('content', '')}\n[Target language: {target_lang}]"
                             break
                 chat_data = {
+                    "model": OLLAMA_LLAMA_MODEL,
                     "messages": messages,
                     "n_predict": data.get("n_predict", 512),
                     "temperature": data.get("temperature", {
                         'teacher': 0.5, 'conversation': 0.7
                     }.get(mode, 0.7)),
                     "stream": data.get("stream", False),
+                    "reasoning_format": "none",
                 }
             else:
                 # Build messages with proper system prompt from translator module
@@ -670,12 +775,14 @@ class Handler(SimpleHTTPRequestHandler):
                     user_content = f"{user_text}\n[Target language: {target_lang}]"
                 messages.append({'role': 'user', 'content': user_content})
                 chat_data = {
+                    "model": OLLAMA_LLAMA_MODEL,
                     "messages": messages,
                     "n_predict": data.get("n_predict", 1024),
                     "temperature": data.get("temperature", {
                         'teacher': 0.5, 'conversation': 0.7
                     }.get(mode, 0.7)),
                     "stream": data.get("stream", False),
+                    "reasoning_format": "none",
                 }
 
             # Cache check (non-streaming only)
@@ -794,50 +901,42 @@ class Handler(SimpleHTTPRequestHandler):
                 return
 
             # Determinar idioma
-            if lang not in ('es', 'en'):
+            if lang not in KOKORO_CONFIG:
                 detected = detect_language(text)
-                lang = detected if detected in ('es', 'en') else 'es'
+                lang = detected if detected in KOKORO_CONFIG else 'es'
 
             wav_data = None
             method = "kokoro"
             
-            # ── 1. Kokoro-82M (primario) ──
+            # ── 1. Kokoro-82M ONNX (primario, CPU) ──
             if HAVE_KOKORO:
-                pipeline, voice = _get_kokoro_pipeline(lang)
-                if pipeline and voice:
-                    try:
-                        generator = pipeline(text, voice=voice, speed=1)
-                        audio_chunks = []
-                        for gs, ps, audio in generator:
-                            if audio is not None and len(audio) > 0:
-                                audio_chunks.append(np.asarray(audio, dtype=np.float32))
-                        
-                        if audio_chunks:
-                            full_audio = np.concatenate(audio_chunks)
-                            full_audio = np.clip(full_audio, -1.0, 1.0)
-                            full_int16 = (full_audio * 32767).astype(np.int16)
-                            
-                            data_size = len(full_int16) * 2
-                            buf = bytearray(44 + data_size)
-                            buf[0:4] = b'RIFF'
-                            struct.pack_into('<I', buf, 4, data_size + 36)
-                            buf[8:12] = b'WAVE'
-                            buf[12:16] = b'fmt '
-                            struct.pack_into('<I', buf, 16, 16)
-                            struct.pack_into('<H', buf, 20, 1)
-                            struct.pack_into('<H', buf, 22, 1)
-                            struct.pack_into('<I', buf, 24, 24000)
-                            struct.pack_into('<I', buf, 28, 48000)
-                            struct.pack_into('<H', buf, 32, 2)
-                            struct.pack_into('<H', buf, 34, 16)
-                            buf[36:40] = b'data'
-                            struct.pack_into('<I', buf, 40, data_size)
-                            buf[44:44+data_size] = full_int16.tobytes()
-                            wav_data = bytes(buf)
-                            method = "kokoro"
-                    except Exception as e:
-                        _safe_print(f"[B] [TTS] Kokoro falló: {e}")
-                        method = "kokoro_fallback"
+                try:
+                    sr, audio = _kokoro_synthesize(text, lang)
+                    if audio is not None and len(audio) > 0:
+                        audio_float32 = np.asarray(audio, dtype=np.float32)
+                        audio_float32 = np.clip(audio_float32, -1.0, 1.0)
+                        full_int16 = (audio_float32 * 32767).astype(np.int16)
+                        data_size = len(full_int16) * 2
+                        buf = bytearray(44 + data_size)
+                        buf[0:4] = b'RIFF'
+                        struct.pack_into('<I', buf, 4, data_size + 36)
+                        buf[8:12] = b'WAVE'
+                        buf[12:16] = b'fmt '
+                        struct.pack_into('<I', buf, 16, 16)
+                        struct.pack_into('<H', buf, 20, 1)
+                        struct.pack_into('<H', buf, 22, 1)
+                        struct.pack_into('<I', buf, 24, sr)
+                        struct.pack_into('<I', buf, 28, sr * 2)
+                        struct.pack_into('<H', buf, 32, 2)
+                        struct.pack_into('<H', buf, 34, 16)
+                        buf[36:40] = b'data'
+                        struct.pack_into('<I', buf, 40, data_size)
+                        buf[44:44+data_size] = full_int16.tobytes()
+                        wav_data = bytes(buf)
+                        method = "kokoro_onnx"
+                except Exception as e:
+                    _safe_print(f"[B] [TTS] Kokoro-ONNX falló: {e}")
+                    method = "kokoro_fallback"
             
             # ── 2. Piper Python API (fallback) ──
             if wav_data is None or len(wav_data) < 100:
@@ -895,19 +994,17 @@ class Handler(SimpleHTTPRequestHandler):
                 self._json_response({"error": "Texto sin caracteres pronunciables"})
                 return
 
-            if lang not in ('es', 'en'):
+            if lang not in KOKORO_CONFIG:
                 detected = detect_language(text)
-                lang = detected if detected in ('es', 'en') else 'es'
+                lang = detected if detected in KOKORO_CONFIG else 'es'
 
             total_pcm = 0
             stream = None
             
-            # ── 1. Kokoro streaming ──
+            # ── 1. Kokoro-ONNX streaming ──
             if HAVE_KOKORO:
-                pipeline, voice = _get_kokoro_pipeline(lang)
-                if pipeline and voice:
-                    stream = _kokoro_synthesize_stream(text, lang)
-                    engine_used = "kokoro"
+                stream = _kokoro_synthesize_stream(text, lang)
+                engine_used = "kokoro_onnx"
             
             # ── 2. Piper streaming (fallback si Kokoro no disponible) ──
             if stream is None:

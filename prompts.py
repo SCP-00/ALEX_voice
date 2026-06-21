@@ -4,12 +4,15 @@ Alex Voice — Shared Translator Module
 ======================================
 Multi-output parsing for structured LLM responses in Teacher and Translator modes.
 
-All system prompts are in ENGLISH because Qwen2.5-1.5B was trained primarily
-on English data (~70%). Spanish prompts caused language mismatch issues where
-the model would default to Spanish even when the user wrote in English.
+All system prompts are in ENGLISH because Qwen models (2.5-3B, 3.5-4B) respond
+best to English instructions. Spanish prompts caused language mismatch issues.
 
 English prompts ensure the model understands the task correctly and responds
 in the correct language.
+
+v2.1 — Model upgrade: Qwen2.5-3B-Instruct (tool calling + 8K ctx)
+       Extended: Qwen3.5-4B-Instruct (thinking mode + 8K ctx)
+       Cutlet handles Japanese romanization server-side.
 
 Extracts TEXT (for TTS), PRONUNCIATION, and TRANSLATION from structured outputs.
 The TTS pipeline ONLY reads the TEXT field — pronunciation and translation are
@@ -25,34 +28,41 @@ from typing import Optional, Dict, List, Tuple
 
 TEACHER_PROMPT = """You are a patient, warm, and enthusiastic language tutor. Your goal is to help the student learn naturally and without pressure.
 
+You have deep knowledge of ES, EN, and JA grammar, culture, and pronunciation.
+Use this knowledge to provide accurate, nuanced explanations.
+
 STRUCTURED OUTPUT FORMAT — Every response MUST use this exact format:
 
 【TEXT】text in the TARGET LANGUAGE (the language being learned)
-【PRONUNCIATION】phonetic pronunciation or romaji
+【TTS_READING】Latin-script pronunciation for text-to-speech
+【PRONUNCIATION】detailed phonetic breakdown for the student
 【TRANSLATION】translation into the student's NATIVE language
-【EXPLANATION】brief explanation of grammar, structure, or usage
+【EXPLANATION】detailed explanation of grammar, structure, or usage
 【EXERCISE】one short practice exercise
 
 CRITICAL RULES:
 - The student indicates their language at the end of the message with "[User language: X]" or "[Idioma del usuario: X]". USE THIS INFORMATION.
 - 【TEXT】must ALWAYS be in the language being learned (can use non-Latin script)
-- 【TTS_READING】MUST be in LATIN SCRIPT ONLY — this is what the text-to-speech system reads aloud. For Japanese use romaji, for other non-Latin scripts use phonetic Latin transcription. IMPORTANT: the TTS engine only supports Spanish and English sounds, so write it in a way a Spanish/English speaker can pronounce.
-- 【PRONUNCIATION】shows clear pronunciation help
+- 【TTS_READING】MUST be in LATIN SCRIPT ONLY — this is what the text-to-speech system reads aloud. For Japanese use romaji with macrons for long vowels (ō, ū). IMPORTANT: the TTS engine only supports Spanish and English sounds, so write it in a way a Spanish/English speaker can pronounce.
+- 【PRONUNCIATION】should show syllable-by-syllable breakdown, stress marks, and tone hints for Japanese
 - 【TRANSLATION】translates into the student's native language
 - Use BEGINNER vocabulary: common words, short phrases
-- If Japanese: use natural kanji/kana in 【TEXT】, and romaji in 【TTS_READING】
+- If Japanese: use natural kanji/kana in 【TEXT】, proper romaji in 【TTS_READING】 (e.g., ありがとう → arigatō)
 - If Spanish/English: use phonetic pronunciation in 【PRONUNCIATION】 (e.g., "Bweh-nos dee-ahs")
-- Include cultural context when relevant (food, customs, etiquette)
-- Celebrate progress with emojis 😊
+- Include cultural context when relevant (food, customs, etiquette, formal vs casual)
+- For Japanese: explain when to use formal (です/ます) vs casual forms
+- DO NOT use emojis. Write in plain text only. Emojis will be read aloud by text-to-speech and sound terrible.
+- Celebrate progress with encouraging words, not emojis
 - CRITICAL: You MUST respond in the LANGUAGE the user asks for. If the user writes in English and asks for Japanese, 【TEXT】must be in Japanese.
+- NEVER use emojis in any field. They will be spoken aloud by TTS and sound like 'carita sonriente punto'.
 
 EXAMPLE (Spanish-speaking student learning Japanese):
 【TEXT】こんにちは、元気ですか？
 【TTS_READING】Konnichiwa, genki desu ka?
-【PRONUNCIATION】Kohn-nee-chee-wah, Gehn-kee deh-soo kah?
+【PRONUNCIATION】Kohn-nee-chee-wah, GEHN-kee DEH-soo kah? (rising intonation at end)
 【TRANSLATION】¡Hola! ¿Cómo estás?
-【EXPLANATION】Basic greeting used in Japan during the daytime. Very common.
-【EXERCISE】Try saying "Good morning" in Japanese."""
+【EXPLANATION】Standard daytime greeting. 「こんにちは」(konnichiwa) literally means "this day" but is used as "hello". 「元気ですか」(genki desu ka) asks "Are you well?" — the ですか makes it polite.
+【EXERCISE】Try greeting someone with "おはようございます" (Good morning) — used until about 10 AM."""
 
 CONVERSATION_PROMPT = """You are a charismatic and natural conversation partner. You talk like a real person, not an assistant.
 
@@ -70,7 +80,7 @@ CRITICAL RULES:
 - DO NOT translate — just have a natural conversation
 - Alternate between asking questions and sharing your own thoughts
 - Responses 2-4 paragraphs, not long monologues
-- Use emojis moderately 😊
+- DO NOT use emojis. Write in plain text only. Emojis will be read aloud by text-to-speech and sound terrible (e.g. "carita sonriente punto").
 - If the user says goodbye, say goodbye naturally"""
 
 TRANSLATOR_PROMPT = """You are a professional translator with absolute precision.
@@ -187,15 +197,20 @@ def get_tts_text(response: str, mode: str) -> str:
       2. 【TEXT】 — the main content (may contain non-Latin characters)
       3. Full response — fallback
     
-    Strategy by mode:
-      - teacher:     Read 【TTS_READING】 → 【TEXT】 → full response
-      - translator:  Read 【TTS_READING】 → 【TEXT】 → full response
-      - conversation: Read everything (free-form response)
+    All modes get cleaned: emojis, thinking tags, and emoji descriptions
+    are stripped before returning, since TTS should NEVER read these aloud.
     """
-    if mode == 'conversation':
-        return response.strip()
+    import re as _re
     
-    parsed = parse_multi_output(response)
+    # Universal cleaning: strip thinking tags
+    _thinking_re = _re.compile(r'<think>[\s\S]*?</think>', _re.DOTALL)
+    clean = _thinking_re.sub('', response)
+    
+    if mode == 'conversation':
+        # Conversation mode: return full response but cleaned
+        return clean.strip()
+    
+    parsed = parse_multi_output(clean)
     
     # Priority 1: TTS_READING (Latin script, designed for TTS)
     tts_reading = parsed.get('tts_reading', '').strip()
@@ -207,8 +222,8 @@ def get_tts_text(response: str, mode: str) -> str:
     if text:
         return text
     
-    # Priority 3: full response
-    return response.strip()
+    # Priority 3: full response (cleaned)
+    return clean.strip()
 
 
 def build_llm_messages(system_prompt: str, history: List[Dict], user_text: str,

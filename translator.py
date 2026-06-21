@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
 """
-Alex Voice — Translator Server (port 3003)
-==========================================
-Pipeline: Speech → STT (faster-whisper CPU) → Translation (argos-translate CPU) → TTS (Qwen3-TTS GPU)
+Alex Voice — Translator Server v3 (Async Pipeline)
+====================================================
+Asynchronous Sentence-Level Pipelining for real-time speech translation.
 
-Separado del servidor principal para especializacion.
-Carga Qwen3-TTS en GPU bajo demanda. Traduccion corre 100% en CPU.
+Architecture:
+  Audio → VAD → [ASR Queue] → ASR Worker (GPU) → [Trans Queue] → Translation Worker (GPU) → [TTS Queue] → TTS Worker (CPU) → Audio Out
+
+Key improvement: While TTS plays sentence N, GPU already transcribes sentence N+1.
+This cuts perceived latency from sequential (ASR+Trans+TTS) to just the slowest stage.
+
+Pipeline: Speech → STT (faster-whisper GPU) → Translation (MarianMT GPU) → TTS (Kokoro ONNX CPU)
+- ASR: faster-whisper small INT8 (GPU, ~1.5GB)
+- Translation: Helsinki-NLP Opus-MT via transformers (GPU) — ~100ms
+- TTS: Kokoro-82M ONNX (CPU, 0MB VRAM) — 54 voices, 5 languages
 """
 
-import json, os, sys, time, base64, struct, threading, re, gc
+import json, os, sys, time, base64, struct, threading, re, queue
 from pathlib import Path
 from http.server import HTTPServer, SimpleHTTPRequestHandler
-from urllib.parse import urlparse
-from concurrent.futures import ThreadPoolExecutor
-
-# ── ThreadPoolExecutor global para tareas CPU pesadas en paralelo con GPU ──
-#    Permite delegar: mientras GPU genera audio, CPU convierte el chunk anterior a WAV
-_cpu_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cpu_worker")
+from socketserver import ThreadingMixIn
 
 import numpy as np
 import torch
@@ -27,410 +30,177 @@ PROJECT_ROOT = Path(__file__).parent.resolve()
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 PORT = int(os.environ.get("TRANSLATOR_PORT", "3003"))
 
-# ── ARGOS TRANSLATE (CPU, lightweight) ──
-HAVE_ARGOS = False
-try:
-    import argostranslate.package
-    import argostranslate.translate
-    HAVE_ARGOS = True
-except ImportError:
-    pass
-
-_argos_loaded = False
-_argos_lock = threading.RLock()  # RLock para permitir llamadas re-entrantes
-
+# ── Language maps ──────────────────────────────────────────
 LANG_MAP = {
-    'en': 'English',
-    'es': 'Spanish',
-    'ja': 'Japanese',
-    'fr': 'French',
-    'ko': 'Korean',
-    'zh': 'Chinese',
-    'de': 'German',
-    'pt': 'Portuguese',
+    'en': 'English', 'es': 'Spanish', 'ja': 'Japanese',
+    'fr': 'French', 'ko': 'Korean', 'zh': 'Chinese',
+    'de': 'German', 'pt': 'Portuguese',
 }
 
-ARGOS_CODES = {
-    'en': 'en',
-    'es': 'es',
-    'ja': 'ja',
-    'fr': 'fr',
-    'ko': 'ko',
-    'zh': 'zh',
-    'de': 'de',
-    'pt': 'pt',
+# ── MarianMT Translation (transformers) ───────────────────
+HAVE_TRANSFORMERS = False
+_translation_models = {}  # (from_lang, to_lang) -> (model, tokenizer)
+_translation_lock = threading.Lock()
+
+PAIR_MODEL_MAP = {
+    ('en', 'es'): 'Helsinki-NLP/opus-mt-en-es',
+    ('es', 'en'): 'Helsinki-NLP/opus-mt-es-en',
+    ('en', 'ja'): 'Helsinki-NLP/opus-mt-en-jap',
+    ('ja', 'en'): 'Helsinki-NLP/opus-mt-ja-en',
+    ('ja', 'es'): 'Helsinki-NLP/opus-mt-ja-es',
 }
 
-# ── Lazy language pair installer ──
-_argos_pkgs_loaded = False
+PIVOT_PAIRS = {
+    ('es', 'ja'): ('es', 'en', 'ja'),
+    ('ja', 'es'): ('ja', 'en', 'es'),
+}
 
-def _ensure_lang_pair(from_code, to_code):
-    """Ensure a specific argos language pair is installed.
-    Lazy-loads on demand — solo descarga cuando se necesita.
-    """
-    if from_code == to_code:
-        return True
-    if not HAVE_ARGOS:
-        return False
-    
-    # Quick check if already installed
-    installed = argostranslate.package.get_installed_packages()
-    if any(p.from_code == from_code and p.to_code == to_code for p in installed):
-        return True
-    
-    # Lazy-download e install (thread-safe con double-check)
-    with _argos_lock:
-        # Re-check after acquiring lock
-        installed = argostranslate.package.get_installed_packages()
-        if any(p.from_code == from_code and p.to_code == to_code for p in installed):
-            return True
-        try:
-            print(f"[Translator] Descargando paquete argos: {from_code}→{to_code}...")
-            available = argostranslate.package.get_available_packages()
-            pkg = next((p for p in available if p.from_code == from_code and p.to_code == to_code), None)
-            if pkg:
-                path = pkg.download()
-                argostranslate.package.install_from_path(path)
-                print(f"[Translator] ✅ Paquete {from_code}→{to_code} instalado")
-                return True
-            else:
-                print(f"[Translator] ⚠️ Paquete {from_code}→{to_code} no disponible en argos")
-                return False
-        except Exception as e:
-            print(f"[Translator] ❌ Error instalando {from_code}→{to_code}: {e}")
-            return False
+try:
+    from transformers import MarianMTModel, MarianTokenizer
+    HAVE_TRANSFORMERS = True
+except ImportError:
+    print("[Translator] transformers not available. pip install transformers")
 
-def _install_core_pairs():
-    """Instalar pares core: EN↔ES, EN↔JA (ES↔JA usa pivote EN)."""
-    global _argos_pkgs_loaded
-    if _argos_pkgs_loaded:
-        return True
-    if not HAVE_ARGOS:
-        return False
-    
-    with _argos_lock:
-        if _argos_pkgs_loaded:
-            return True
+
+def _get_translation_model(from_lang, to_lang):
+    """Lazy-load a MarianMT model+tokenizer pair."""
+    if not HAVE_TRANSFORMERS:
+        return None
+    key = (from_lang, to_lang)
+    if key in _translation_models:
+        return _translation_models[key]
+    with _translation_lock:
+        if key in _translation_models:
+            return _translation_models[key]
+        hf_model_name = PAIR_MODEL_MAP.get(key)
+        if not hf_model_name:
+            return None
         try:
-            # Core pairs: EN↔ES, EN↔JA (ES↔JA y JA↔ES usan pivote via EN)
-            core_pairs = [('en','es'), ('es','en'), ('en','ja'), ('ja','en')]
-            ok_count = 0
-            for fc, tc in core_pairs:
-                if _ensure_lang_pair(fc, tc):
-                    ok_count += 1
-            if ok_count >= 4:
-                _argos_pkgs_loaded = True
-                print(f"[Translator] argos: EN↔ES↔JA listo (ES↔JA via pivote EN)")
-            return _argos_pkgs_loaded
+            t0 = time.time()
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            tokenizer = MarianTokenizer.from_pretrained(hf_model_name)
+            model = MarianMTModel.from_pretrained(hf_model_name).to(device)
+            model.eval()
+            elapsed = (time.time() - t0) * 1000
+            print(f"[Translator] {from_lang}→{to_lang} loaded on {device} in {elapsed:.0f}ms")
+            result = (model, tokenizer)
+            _translation_models[key] = result
+            return result
         except Exception as e:
-            print(f"[Translator] Error instalando paquetes core: {e}")
-            return False
+            print(f"[Translator] Error loading {from_lang}→{to_lang}: {e}")
+            return None
+
 
 def translate(text, from_lang, to_lang):
-    """Translate text using argos-translate (CPU) con lazy-load.
-    
-    Usa traduccion pivote via EN si el par directo no existe
-    (ej: es→ja → es→en→ja).
-    """
-    if not HAVE_ARGOS:
-        return None, "argos-translate not installed"
-    try:
-        fc = ARGOS_CODES.get(from_lang, from_lang)
-        tc = ARGOS_CODES.get(to_lang, to_lang)
-        
-        if fc == tc:
-            return text, None
-        
-        # Try direct pair first
-        if _ensure_lang_pair(fc, tc):
-            result = argostranslate.translate.translate(text, fc, tc)
-            return result, None
-        
-        # Pivot via English (fc → en → tc)
-        if _ensure_lang_pair(fc, 'en') and _ensure_lang_pair('en', tc):
-            print(f"[Translator] Usando pivote EN: {fc}→en→{tc}")
-            mid = argostranslate.translate.translate(text, fc, 'en')
-            if not mid:
-                return None, "Pivot translation failed (step 1)"
-            result = argostranslate.translate.translate(mid, 'en', tc)
-            return result, None
-        
-        return None, f"No translation path available for {from_lang}→{to_lang}"
-    except Exception as e:
-        return None, str(e)[:200]
-
-
-# ── QWEN3-TTS (GPU, OPTIMIZADO) ──
-HAVE_QWEN3_TTS = False
-_qwen3_model = None
-_qwen3_lock = threading.Lock()
-_qwen3_warmup_done = False
-
-# ── Límite por chunk para TTS — aumentado a 1500 chars para reducir invocaciones ──
-#    Cada chunk = 1 llamada a generate_custom_voice() con overhead de ~2-5s.
-#    Con 1500 chars, la mayoría de las traducciones caben en 1 solo chunk.
-_MAX_TTS_CHARS = 1500
-
-
-def _chunk_text(text, max_chars=_MAX_TTS_CHARS):
-    """Split text at sentence boundaries for chunked TTS generation."""
-    if len(text) <= max_chars:
-        return [text]
-    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
-    chunks = []
-    current = ""
-    for s in sentences:
-        if not s.strip():
-            continue
-        if len(current) + len(s) <= max_chars:
-            current = (current + " " + s).strip()
-        else:
-            if current:
-                chunks.append(current)
-            current = s
-    if current:
-        chunks.append(current)
-    return chunks
-
-# ── Atención optimizada: flash-attn o SDPA nativo de PyTorch ──
-has_flash_attn = False
-attn_mode = "sdpa"  # Default: SDPA nativo de PyTorch 2.0+ (CUDA optimizado)
-try:
-    import flash_attn
-    has_flash_attn = True
-    attn_mode = "flash_attention_2"
-    print(f"[Translator] flash-attn: DISPONIBLE (aceleracion ~2-3x)")
-except ImportError:
-    print(f"[Translator] flash-attn: NO DISPONIBLE — usando SDPA nativo de PyTorch")
-    print(f"[Translator] Para acelerar: pip install xformers  (Windows)")
-
-try:
-    import xformers
-    print(f"[Translator] xformers: DISPONIBLE (optimizacion Windows)")
-except ImportError:
-    pass
-
-def _unload_asr():
-    """Libera ASR (Whisper) de VRAM para dejar espacio a Qwen3-TTS."""
-    global _asr_models
-    with _asr_lock:
-        if _asr_models:
-            _asr_models.clear()
-            gc.collect()
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-            print(f"[Translator] ASR liberado de VRAM")
-
-def _load_qwen3():
-    """Lazy-load Qwen3-TTS on GPU con optimizaciones.
-    
-    Libera Whisper de VRAM primero (ASR y TTS nunca se usan juntos).
-    """
-    global _qwen3_model, HAVE_QWEN3_TTS, _qwen3_warmup_done
-    if _qwen3_model is not None:
-        return True
-    with _qwen3_lock:
-        if _qwen3_model is not None:
-            return True
+    """Translate text using Helsinki-NLP Opus-MT via transformers."""
+    if not HAVE_TRANSFORMERS:
+        return None, "transformers not installed"
+    if from_lang == to_lang:
+        return text, None
+    result = _get_translation_model(from_lang, to_lang)
+    if result is not None:
         try:
-            from qwen_tts import Qwen3TTSModel
-            
-            # Liberar Whisper primero para dejar espacio a Qwen3 (~3.5GB)
-            _unload_asr()
-            
-            print(f"[Translator] Cargando Qwen3-TTS-CustomVoice en GPU...")
-            print(f"[Translator] Atencion: {attn_mode}")
-            t0 = time.time()
-            _qwen3_model = Qwen3TTSModel.from_pretrained(
-                "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
-                device_map="cuda:0",
-                dtype=torch.bfloat16,
-                attn_implementation=attn_mode,
-            )
-            
-            # OPTIMIZATION 1: torch.compile() para acelerar inferencia
-            try:
-                _qwen3_model = torch.compile(_qwen3_model, mode="reduce-overhead")
-                print(f"[Translator] torch.compile aplicado (reduce-overhead)")
-            except Exception as e:
-                print(f"[Translator] torch.compile no disponible: {e}")
-            
-            load_time = time.time() - t0
-            vram = torch.cuda.memory_allocated() / 1024**2
-            print(f"[Translator] Modelo cargado en {load_time:.1f}s (VRAM: {vram:.0f}MB)")
-            
-            # OPTIMIZATION 2: Warmup pass para evitar cold-start
-            print(f"[Translator] Ejecutando warmup...")
-            _run_warmup()
-            _qwen3_warmup_done = True
-            
-            HAVE_QWEN3_TTS = True
-            return True
+            model, tokenizer = result
+            device = next(model.parameters()).device
+            inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+            with torch.no_grad():
+                outputs = model.generate(**inputs, max_new_tokens=512)
+            translated = tokenizer.decode(outputs[0], skip_special_tokens=True)
+            return translated, None
         except Exception as e:
-            print(f"[Translator] Error cargando Qwen3-TTS: {e}")
-            return False
+            print(f"[Translator] Translation error {from_lang}→{to_lang}: {e}")
+    pivot = PIVOT_PAIRS.get((from_lang, to_lang))
+    if pivot:
+        t_en, _ = translate(text, from_lang, 'en')
+        if t_en:
+            t_final, err = translate(t_en, 'en', to_lang)
+            if t_final:
+                return t_final, None
+            return None, err
+    return None, f"No translation path for {from_lang}→{to_lang}"
 
-def _run_warmup():
-    """Warmup 2-paso: compila kernels CUDA + captura CUDA Graphs.
 
-    torch.compile(mode="reduce-overhead") captura CUDA Graphs automáticamente.
-    2 pases: 1° compila, 2° reusa la graph. Suficiente para calentar.
-    Nota: las primeras 1-2 solicitudes reales pueden ser más lentas si el
-    tamaño de entrada no coincide exactamente con los warmup texts.
-    """
+# ── Kokoro-82M ONNX TTS (CPU, 0 VRAM) ────────────────────
+_kokoro_instance = None
+KOKORO_LOCK = threading.Lock()
+HAVE_KOKORO = False
+
+KOKORO_CONFIG = {
+    'es': {'lang': 'es', 'voice': 'ef_dora'},
+    'en': {'lang': 'en-us', 'voice': 'af_heart'},
+    'ja': {'lang': 'ja', 'voice': 'jf_alpha'},
+    'fr': {'lang': 'fr-fr', 'voice': 'ff_siwis'},
+    'de': {'lang': 'de', 'voice': 'bf_emma'},
+}
+
+KOKORO_MODEL_PATH = PROJECT_ROOT / "models" / "onnx" / "kokoro-v1.0.onnx"
+KOKORO_VOICES_PATH = PROJECT_ROOT / "models" / "onnx" / "voices-v1.0.bin"
+
+
+def _get_kokoro_instance():
+    """Lazy-load singleton de Kokoro ONNX."""
+    global _kokoro_instance, HAVE_KOKORO
+    if _kokoro_instance is not None:
+        return _kokoro_instance
+    with KOKORO_LOCK:
+        if _kokoro_instance is not None:
+            return _kokoro_instance
+        try:
+            from kokoro_onnx import Kokoro
+            if not KOKORO_MODEL_PATH.exists() or not KOKORO_VOICES_PATH.exists():
+                print(f"[Translator] Kokoro ONNX models not found in {KOKORO_MODEL_PATH.parent}")
+                return None
+            t0 = time.time()
+            _kokoro_instance = Kokoro(str(KOKORO_MODEL_PATH), str(KOKORO_VOICES_PATH))
+            elapsed = (time.time() - t0) * 1000
+            voices = _kokoro_instance.get_voices()
+            print(f"[Translator] Kokoro ONNX loaded in {elapsed:.0f}ms — {len(voices)} voices")
+            HAVE_KOKORO = True
+            return _kokoro_instance
+        except Exception as e:
+            print(f"[Translator] Kokoro ONNX error: {e}")
+            return None
+
+
+def kokoro_synthesize(text, lang='es'):
+    """Synthesize speech with Kokoro ONNX (CPU)."""
+    k = _get_kokoro_instance()
+    if k is None:
+        return None, None
+    cfg = KOKORO_CONFIG.get(lang, KOKORO_CONFIG['es'])
     try:
-        warmup_texts = [
-            "Hello. Welcome to Alex Voice.",               # Pase 1: compilación inicial
-            "How are you doing today? I am doing great!",  # Pase 2: reuso con CUDA Graph
-        ]
-        with torch.inference_mode():
-            for i, text in enumerate(warmup_texts):
-                t0 = time.time()
-                wavs, sr = _qwen3_model.generate_custom_voice(
-                    text=text,
-                    language="English",
-                    speaker="Vivian",
-                    max_new_tokens=512,
-                    temperature=0.7,
-                )
-                torch.cuda.synchronize()
-                dt = (time.time() - t0) * 1000
-                # Liberar memoria inmediatamente para evitar picos VRAM
-                del wavs
-                torch.cuda.synchronize()
-                vram = torch.cuda.memory_allocated() / 1024**2
-                print(f"[Translator]   Warmup {i+1}/2: {dt:.0f}ms (VRAM: {vram:.0f}MB)")
-        print(f"[Translator] Warmup completo — modelo optimizado")
+        audio, sr = k.create(text, voice=cfg['voice'], speed=1.0, lang=cfg['lang'])
+        return audio, sr
     except Exception as e:
-        print(f"[Translator] Warmup ignorado: {e}")
-
-def _unload_qwen3():
-    """Unload Qwen3-TTS from GPU to free VRAM."""
-    global _qwen3_model, HAVE_QWEN3_TTS, _qwen3_warmup_done
-    with _qwen3_lock:
-        if _qwen3_model is not None:
-            del _qwen3_model
-            _qwen3_model = None
-            _qwen3_warmup_done = False
-            HAVE_QWEN3_TTS = False
-            gc.collect()
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-            print("[Translator] Qwen3-TTS descargado de GPU")
-
-def qwen3_synthesize(text, language, speaker='Serena', instruct=None,
-                      max_new_tokens=6144, temperature=0.7):
-    """Synthesize speech with Qwen3-TTS (OPTIMIZADO).
-
-    OPTIMIZACIONES:
-    1. Chunk size 1500 chars (era 600) → menos chunks = menos overhead de primer token
-    2. max_new_tokens 6144 (era 2048) → permite chunks más largos sin truncar
-    3. Pipeline paralelo (ThreadPoolExecutor): mientras GPU genera chunk N, CPU prepara
-       la serialización WAV del chunk N-1. Overlap CPU↔GPU para máximo throughput.
-    4. Nota: las primeras 1-2 solicitudes serán más lentas mientras Triton termina de
-       compilar kernels para el tamaño exacto de entrada (warmup cubre tamaños típicos).
-
-    Args:
-        text: Texto a sintetizar.
-        language: Idioma del texto (ej: 'English', 'Spanish').
-        speaker: Voz predefinida (Vivian/Serena/Ono_Anna/Aiden/etc).
-        instruct: Instruccion de voz en lenguaje natural (tono, velocidad, emocion).
-        max_new_tokens: Max tokens de audio generados por chunk. Mayor = chunks más largos.
-        temperature: Control de estabilidad (menor = mas estable, mayor = mas variado).
-    """
-    if not _load_qwen3():
-        return None, "Qwen3-TTS not available"
-    try:
-        chunks = _chunk_text(text)
-        if not chunks:
-            return None, "No text to synthesize"
-
-        all_audio = []
-        sample_rate = None
-        t_total_start = time.time()
-
-        # ── Pipeline paralelo: GPU genera chunk i, CPU serializa chunk i-1 ──
-        #    Usamos ThreadPoolExecutor para delegar la conversión numpy→int16
-        #    mientras la GPU sigue generando el siguiente chunk.
-        previous_chunk_future = None
-
-        for i, chunk in enumerate(chunks):
-            t_chunk_start = time.time()
-
-            kwargs = {
-                'text': chunk,
-                'language': language,
-                'speaker': speaker,
-                'max_new_tokens': max_new_tokens,
-                'temperature': temperature,
-            }
-            if instruct:
-                kwargs['instruct'] = instruct
-
-            # GPU: generar audio para este chunk
-            with torch.inference_mode():
-                wavs, sr = _qwen3_model.generate_custom_voice(**kwargs)
-
-            torch.cuda.synchronize()
-            chunk_gpu_ms = (time.time() - t_chunk_start) * 1000
-
-            if not wavs or len(wavs) == 0:
-                continue
-
-            current_sr = sr
-            if sample_rate is None:
-                sample_rate = current_sr
-
-            # ── Delegación: convertir wavs[0] a float32 en CPU thread ──
-            #    La conversión GPU→CPU (np.asarray) ocurre EN el executor,
-            #    no bloqueando el hilo principal. Así GPU y CPU trabajan en paralelo.
-            #    Si hay un chunk anterior siendo serializado, esperar que termine
-            if previous_chunk_future is not None:
-                previous_result = previous_chunk_future.result()
-                if previous_result is not None:
-                    all_audio.append(previous_result)
-
-            # Enviar wavs[0] directo al executor — él hará la transferencia GPU→CPU
-            previous_chunk_future = _cpu_executor.submit(_convert_chunk_to_float32, wavs[0])
-
-            if len(chunks) > 1:
-                audio_secs = len(audio_data) / current_sr if current_sr else 0
-                print(f"[Translator]   Chunk {i+1}/{len(chunks)}: {chunk_gpu_ms:.0f}ms GPU para {audio_secs:.1f}s audio ({len(chunk)} chars)")
-
-        # Esperar el último chunk serializado
-        if previous_chunk_future is not None:
-            last_result = previous_chunk_future.result()
-            if last_result is not None:
-                all_audio.append(last_result)
-
-        if not all_audio:
-            return None, "No audio generated"
-
-        full_audio = np.concatenate(all_audio) if len(all_audio) > 1 else all_audio[0]
-        total_ms = (time.time() - t_total_start) * 1000
-        total_secs = len(full_audio) / sample_rate if sample_rate else 0
-
-        if len(chunks) > 1:
-            print(f"[Translator] Total: {len(chunks)} chunks en {total_ms:.0f}ms para {total_secs:.1f}s audio")
-
-        return (full_audio, sample_rate), None
-
-    except Exception as e:
-        return None, str(e)[:200]
+        print(f"[Translator] Kokoro synthesis error: {e}")
+        return None, None
 
 
-def _convert_chunk_to_float32(audio_data):
-    """Convierte GPU tensor → float32 numpy en CPU thread.
-    Se ejecuta en el ThreadPoolExecutor, en PARALELO con la generación GPU
-    del siguiente chunk. La transferencia GPU→CPU no bloquea el hilo principal.
-    """
-    # Si es tensor CUDA, mover a CPU primero (ocurre en este thread, no en main)
-    if hasattr(audio_data, 'cpu'):
-        audio_data = audio_data.cpu()
-    return np.asarray(audio_data, dtype=np.float32)
+def _make_wav(audio_float32, sample_rate):
+    """Convert float32 audio to WAV bytes."""
+    audio_float32 = np.clip(audio_float32, -1.0, 1.0)
+    int16 = (audio_float32 * 32767).astype(np.int16)
+    data_size = len(int16) * 2
+    buf = bytearray(44 + data_size)
+    buf[0:4] = b'RIFF'
+    struct.pack_into('<I', buf, 4, data_size + 36)
+    buf[8:12] = b'WAVE'
+    buf[12:16] = b'fmt '
+    struct.pack_into('<I', buf, 16, 16)
+    struct.pack_into('<H', buf, 20, 1)
+    struct.pack_into('<H', buf, 22, 1)
+    struct.pack_into('<I', buf, 24, sample_rate)
+    struct.pack_into('<I', buf, 28, sample_rate * 2)
+    struct.pack_into('<H', buf, 32, 2)
+    struct.pack_into('<H', buf, 34, 16)
+    buf[36:40] = b'data'
+    struct.pack_into('<I', buf, 40, data_size)
+    buf[44:44 + data_size] = int16.tobytes()
+    return bytes(buf)
 
 
-# ── ASR (faster-whisper, CPU) ──
+# ── ASR (faster-whisper, GPU) ─────────────────────────────
 HAVE_WHISPER = False
 _asr_models = {}
 _asr_lock = threading.Lock()
@@ -441,49 +211,38 @@ try:
 except ImportError:
     pass
 
-def _get_asr(model_name="large-v3-turbo"):
+
+def _get_asr(model_name="small"):
     if model_name in _asr_models:
         return _asr_models[model_name]
     with _asr_lock:
         if model_name in _asr_models:
             return _asr_models[model_name]
         try:
-            # Liberar Qwen3 primero si está en VRAM (nunca se usan juntos)
-            if _qwen3_model is not None:
-                print(f"[Translator] Liberando Qwen3-TTS para cargar ASR...")
-                _unload_qwen3()
-            m = WhisperModel(model_name, device="cuda", compute_type="int8_float16")
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            m = WhisperModel(model_name, device=device, compute_type="int8")
             _asr_models[model_name] = m
             return m
         except Exception as e:
-            print(f"[Translator] Error ASR: {e}")
+            print(f"[Translator] ASR error: {e}")
             return None
 
+
 def transcribe_audio(audio_b64, language="auto"):
-    """Transcribe audio with faster-whisper.
-    Returns: (text, detected_lang, error) tuple.
-    """
-    
+    """Transcribe audio with faster-whisper. Returns: (text, detected_lang, error)."""
     if not HAVE_WHISPER:
         return None, None, "faster-whisper not installed"
-    
     try:
         raw_audio = base64.b64decode(audio_b64)
-    except:
+    except Exception:
         return None, None, "Invalid audio data"
-    
     if len(raw_audio) < 100:
         return None, None, "Audio too small"
-    
-    model_name = os.environ.get("TRANSLATOR_ASR_MODEL")
-    if not model_name:
-        model_name = "large-v3-turbo"
+    model_name = os.environ.get("TRANSLATOR_ASR_MODEL", "small")
     model = _get_asr(model_name)
     if model is None:
         return None, None, "ASR model not available"
-    
     try:
-        # Parse WAV
         sr = 16000
         if len(raw_audio) >= 44:
             sr = struct.unpack_from('<I', raw_audio, 24)[0]
@@ -495,7 +254,6 @@ def transcribe_audio(audio_b64, language="auto"):
             return None, None, "Empty audio"
         pcm_float32 = pcm_int16.astype(np.float32) / 32768.0
         lang = None if language == "auto" else language
-        
         segments, info = model.transcribe(
             pcm_float32, language=lang, beam_size=5,
             vad_filter=True,
@@ -511,15 +269,16 @@ def transcribe_audio(audio_b64, language="auto"):
         return None, None, str(e)[:300]
 
 
-# ── LANGUAGE DETECTION ──
+# ── Language Detection ─────────────────────────────────────
 def detect_language(text):
     """Detect es/en/ja."""
     if not text.strip():
         return 'en'
     if any('\u3040' <= c <= '\u309f' or '\u30a0' <= c <= '\u30ff' or '\u4e00' <= c <= '\u9fff' for c in text):
         return 'ja'
-    es_words = {'hola','gracias','como','estas','muy','bien','que','el','la','los','las','por','para','con','sin','es','son','del','todo','casa','agua','vida'}
-    words = [w.strip('.,!?;:\'"()[]{}') for w in text.lower().split() if w.strip('.,!?;:\'"()[]{}')]
+    es_words = {'hola', 'gracias', 'como', 'estas', 'muy', 'bien', 'que', 'el', 'la', 'los', 'las',
+                'por', 'para', 'con', 'sin', 'es', 'son', 'del', 'todo', 'casa', 'agua', 'vida'}
+    words = [w.strip('.,!?;:\'\"()[]{}') for w in text.lower().split() if w.strip('.,!?;:\'\"()[]{}')]
     es_chars = sum(1 for c in text if '\u00e1' <= c <= '\u00fa' or c in 'ñçüöéèêëàâîôùû¿¡')
     if not words:
         return 'en'
@@ -528,42 +287,314 @@ def detect_language(text):
     return 'en'
 
 
-# ── HTTP HANDLER ──
+# ══════════════════════════════════════════════════════════════
+#  ASYNC PIPELINE — Queue-based workers for real-time fluency
+# ══════════════════════════════════════════════════════════════
+
+class TranslationPipeline:
+    """Async pipeline: ASR Queue → Translation Queue → TTS Queue
+    
+    While TTS plays sentence N, GPU is already transcribing/translating sentence N+1.
+    This cuts perceived latency to just the slowest stage (~150ms for TTS).
+    """
+
+    def __init__(self):
+        # Queues connecting pipeline stages
+        self._asr_queue = queue.Queue(maxsize=50)
+        self._trans_queue = queue.Queue(maxsize=50)
+        self._tts_queue = queue.Queue(maxsize=50)
+
+        # Result tracking for sync requests
+        self._results = {}  # request_id -> result
+        self._results_lock = threading.Lock()
+
+        # Pipeline state
+        self._running = False
+        self._workers = []
+
+    def start(self):
+        """Start all pipeline worker threads."""
+        if self._running:
+            return
+        self._running = True
+
+        # ASR Worker: audio → text (GPU)
+        t = threading.Thread(target=self._asr_worker, daemon=True, name="pipeline-asr")
+        t.start()
+        self._workers.append(t)
+
+        # Translation Worker: text_es → text_target (GPU)
+        t = threading.Thread(target=self._translation_worker, daemon=True, name="pipeline-trans")
+        t.start()
+        self._workers.append(t)
+
+        # TTS Worker: text → audio (CPU)
+        t = threading.Thread(target=self._tts_worker, daemon=True, name="pipeline-tts")
+        t.start()
+        self._workers.append(t)
+
+        print("[Pipeline] Async workers started: ASR → Translation → TTS")
+
+    def stop(self):
+        """Stop all pipeline workers."""
+        self._running = False
+        # Put poison pills to unblock workers
+        for q in [self._asr_queue, self._trans_queue, self._tts_queue]:
+            try:
+                q.put(None, timeout=0.1)
+            except queue.Full:
+                pass
+        for t in self._workers:
+            t.join(timeout=3)
+        self._workers.clear()
+        print("[Pipeline] Workers stopped")
+
+    def submit_audio(self, audio_b64, from_lang="auto", to_lang="es",
+                     request_id=None, text_mode=False):
+        """Submit audio for async pipeline processing."""
+        if request_id is None:
+            request_id = str(time.time())
+        item = {
+            'audio_b64': audio_b64,
+            'from_lang': from_lang,
+            'to_lang': to_lang,
+            'request_id': request_id,
+            'text_mode': text_mode,
+            't0': time.time(),
+        }
+        self._asr_queue.put(item)
+        return request_id
+
+    def get_result(self, request_id, timeout=30):
+        """Wait for and return the result of an async request."""
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            with self._results_lock:
+                if request_id in self._results:
+                    result = self._results.pop(request_id)
+                    return result
+            time.sleep(0.05)
+        return None
+
+    def _asr_worker(self):
+        """ASR Worker: pulls audio from queue, transcribes, pushes text to translation queue."""
+        print("[Pipeline] ASR worker ready")
+        while self._running:
+            try:
+                item = self._asr_queue.get(timeout=1)
+            except queue.Empty:
+                continue
+            if item is None:
+                break
+
+            try:
+                t0 = time.time()
+                text, detected_lang, error = transcribe_audio(
+                    item['audio_b64'], item.get('from_lang', 'auto')
+                )
+                asr_time = (time.time() - t0) * 1000
+
+                if error or not text:
+                    with self._results_lock:
+                        self._results[item['request_id']] = {
+                            'error': error or "ASR produced no text",
+                            'stage': 'asr',
+                        }
+                    continue
+
+                # Auto-detect source language
+                from_lang = item.get('from_lang', 'auto')
+                if from_lang == 'auto':
+                    from_lang = detected_lang
+
+                # Pass to translation queue
+                trans_item = {
+                    'text': text,
+                    'from_lang': from_lang,
+                    'to_lang': item['to_lang'],
+                    'request_id': item['request_id'],
+                    'text_mode': item.get('text_mode', False),
+                    't0': item['t0'],
+                    'asr_time': asr_time,
+                    'detected_lang': detected_lang,
+                }
+                self._trans_queue.put(trans_item)
+                print(f"[Pipeline] ASR: \"{text[:50]}...\" ({asr_time:.0f}ms, lang={detected_lang})")
+
+            except Exception as e:
+                print(f"[Pipeline] ASR worker error: {e}")
+                with self._results_lock:
+                    self._results[item['request_id']] = {
+                        'error': str(e)[:200],
+                        'stage': 'asr',
+                    }
+
+    def _translation_worker(self):
+        """Translation Worker: pulls text, translates, pushes to TTS queue."""
+        print("[Pipeline] Translation worker ready")
+        while self._running:
+            try:
+                item = self._trans_queue.get(timeout=1)
+            except queue.Empty:
+                continue
+            if item is None:
+                break
+
+            try:
+                t0 = time.time()
+                translated, error = translate(
+                    item['text'], item['from_lang'], item['to_lang']
+                )
+                trans_time = (time.time() - t0) * 1000
+
+                if error or not translated:
+                    with self._results_lock:
+                        self._results[item['request_id']] = {
+                            'error': error or "Translation produced no text",
+                            'stage': 'translation',
+                            'original': item['text'],
+                        }
+                    continue
+
+                # Pass to TTS queue
+                tts_item = {
+                    'text': translated,
+                    'lang': item['to_lang'],
+                    'request_id': item['request_id'],
+                    'text_mode': item.get('text_mode', False),
+                    't0': item['t0'],
+                    'asr_time': item.get('asr_time', 0),
+                    'trans_time': trans_time,
+                    'original': item['text'],
+                    'detected_lang': item.get('detected_lang', 'auto'),
+                }
+                self._tts_queue.put(tts_item)
+                print(f"[Pipeline] Translation: \"{item['text'][:30]}\" → \"{translated[:30]}\" ({trans_time:.0f}ms)")
+
+            except Exception as e:
+                print(f"[Pipeline] Translation worker error: {e}")
+                with self._results_lock:
+                    self._results[item['request_id']] = {
+                        'error': str(e)[:200],
+                        'stage': 'translation',
+                    }
+
+    def _tts_worker(self):
+        """TTS Worker: pulls translated text, synthesizes audio, stores result."""
+        print("[Pipeline] TTS worker ready")
+        while self._running:
+            try:
+                item = self._tts_queue.get(timeout=1)
+            except queue.Empty:
+                continue
+            if item is None:
+                break
+
+            try:
+                t0 = time.time()
+                text_mode = item.get('text_mode', False)
+
+                if text_mode:
+                    # Text mode: skip TTS, return text only
+                    tts_time = 0
+                    wav_data = None
+                    audio_secs = 0
+                else:
+                    audio, sr = kokoro_synthesize(item['text'], item['lang'])
+                    tts_time = (time.time() - t0) * 1000
+                    wav_data = None
+                    audio_secs = 0
+                    if audio is not None and len(audio) > 0:
+                        wav_data = _make_wav(audio, sr)
+                        audio_secs = len(audio) / sr if sr else 0
+
+                total_time = (time.time() - item['t0']) * 1000
+
+                result = {
+                    'original': item.get('original', ''),
+                    'translation': item['text'],
+                    'from_lang': item.get('detected_lang', 'auto'),
+                    'to_lang': item['lang'],
+                    'from_lang_name': LANG_MAP.get(item.get('detected_lang', 'auto'), 'auto'),
+                    'to_lang_name': LANG_MAP.get(item['lang'], item['lang']),
+                    'available_languages': list(LANG_MAP.keys()),
+                    'asr_time_ms': int(item.get('asr_time', 0)),
+                    'translation_time_ms': int(item.get('trans_time', 0)),
+                    'tts_time_ms': int(tts_time),
+                    'total_time_ms': int(total_time),
+                    'audio_duration_s': round(audio_secs, 1),
+                    'wav_data': wav_data,
+                }
+                with self._results_lock:
+                    self._results[item['request_id']] = result
+
+                print(f"[Pipeline] TTS: {tts_time:.0f}ms, total pipeline: {total_time:.0f}ms")
+
+            except Exception as e:
+                print(f"[Pipeline] TTS worker error: {e}")
+                with self._results_lock:
+                    self._results[item['request_id']] = {
+                        'error': str(e)[:200],
+                        'stage': 'tts',
+                    }
+
+
+# ── Global pipeline instance ───────────────────────────────
+_pipeline = TranslationPipeline()
+
+
+# ── Threading HTTP Server ─────────────────────────────────
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    """Multi-threaded HTTP server — prevents blocking on pipeline waits."""
+    daemon_threads = True
+
+
+# ── HTTP Handler ───────────────────────────────────────────
 class TranslatorHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(FRONTEND_DIR), **kwargs)
-    
+
     def do_OPTIONS(self):
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
-    
+
     def do_GET(self):
         if self.path == "/api/status":
             self._json({
-                "qwen3_loaded": _qwen3_model is not None,
-                "argos_loaded": _argos_loaded,
                 "whisper_loaded": HAVE_WHISPER,
+                "transformers_loaded": HAVE_TRANSFORMERS,
+                "kokoro_loaded": HAVE_KOKORO,
                 "languages": list(LANG_MAP.keys()),
+                "translators_loaded": list(f"{k[0]}→{k[1]}" for k in _translation_models.keys()),
+                "pipeline_running": _pipeline._running,
+            })
+        elif self.path == "/api/pipeline/stats":
+            self._json({
+                "asr_queue_size": _pipeline._asr_queue.qsize(),
+                "trans_queue_size": _pipeline._trans_queue.qsize(),
+                "tts_queue_size": _pipeline._tts_queue.qsize(),
             })
         elif self.path in ("/", "/index.html"):
             self.path = "/translator.html"
             super().do_GET()
         else:
             super().do_GET()
-    
+
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length) if length > 0 else b"{}"
-        
+
         if self.path == "/api/translate":
             self._handle_translate(body)
         elif self.path == "/api/tts":
             self._handle_tts(body)
         elif self.path == "/api/asr":
             self._handle_asr(body)
+        elif self.path == "/api/pipeline":
+            self._handle_pipeline(body)
         elif self.path == "/api/load":
             self._handle_load(body)
         elif self.path == "/api/unload":
@@ -571,50 +602,55 @@ class TranslatorHandler(SimpleHTTPRequestHandler):
         else:
             self.send_response(404)
             self.end_headers()
-    
+
     def _handle_load(self, body):
-        """Load Qwen3-TTS on demand (can be called before translate for faster first request)."""
+        """Pre-load translation models and Kokoro TTS."""
         t0 = time.time()
-        ok = _load_qwen3()
-        self._json({
-            "ok": ok,
-            "time_ms": int((time.time() - t0) * 1000),
-            "message": "Qwen3-TTS loaded on GPU" if ok else "Failed to load",
-        })
-    
+        try:
+            data = json.loads(body)
+        except Exception:
+            data = {}
+        pairs = data.get("pairs", [("en", "es"), ("es", "en"), ("en", "ja"), ("ja", "en")])
+        loaded = 0
+        for fc, tc in pairs:
+            if _get_translation_model(fc, tc):
+                loaded += 1
+        _get_kokoro_instance()
+        elapsed = int((time.time() - t0) * 1000)
+        self._json({"ok": True, "translators_loaded": loaded, "time_ms": elapsed})
+
     def _handle_unload(self):
-        """Unload Qwen3-TTS to free VRAM."""
-        _unload_qwen3()
-        self._json({"ok": True, "message": "Qwen3-TTS unloaded"})
-    
+        """Unload models to free VRAM."""
+        global _translation_models, _kokoro_instance, HAVE_KOKORO
+        with _translation_lock:
+            _translation_models.clear()
+        with KOKORO_LOCK:
+            _kokoro_instance = None
+            HAVE_KOKORO = False
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        self._json({"ok": True, "message": "All models unloaded"})
+
     def _handle_translate(self, body):
-        """Main endpoint: detect language, translate, return results."""
+        """Sync text translation (no pipeline)."""
         t_start = time.time()
         try:
             data = json.loads(body)
             text = data.get("text", "").strip()
             from_lang = data.get("from_lang", "auto")
             to_lang = data.get("to_lang", "es")
-            
             if not text:
                 self._json({"error": "Empty text"})
                 return
-            
-            # Detect language if auto
             if from_lang == "auto":
                 from_lang = detect_language(text)
-            
-            # Translate
             t_trans_start = time.time()
             translation, error = translate(text, from_lang, to_lang)
             trans_time = int((time.time() - t_trans_start) * 1000)
-            
             if error:
                 self._json({"error": error})
                 return
-            
             total_time = int((time.time() - t_start) * 1000)
-            
             self._json({
                 "original": text,
                 "translation": translation,
@@ -628,85 +664,55 @@ class TranslatorHandler(SimpleHTTPRequestHandler):
             })
         except Exception as e:
             self._json({"error": str(e)[:200]})
-    
+
     def _handle_tts(self, body):
-        """Generate audio with Qwen3-TTS."""
+        """Generate audio with Kokoro ONNX (CPU, 0 VRAM)."""
         t0 = time.time()
         try:
             data = json.loads(body)
             text = data.get("text", "").strip()
-            language = data.get("language", "Spanish")
-            speaker = data.get("speaker", "Serena")
-            instruct = data.get("instruct", None)
-            max_new_tokens = data.get("max_new_tokens", 6144)
-            temperature = data.get("temperature", 0.7)
-            
+            lang = data.get("language", "Spanish")
             if not text:
                 self._json({"error": "Empty text"})
                 return
-            
-            (audio, sr), error = qwen3_synthesize(
-                text, language, speaker, instruct,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature
-            )
-            if error:
-                self._json({"error": error})
+            lang_code_map = {
+                'Spanish': 'es', 'English': 'en', 'Japanese': 'ja',
+                'French': 'fr', 'German': 'de',
+            }
+            lang_code = lang_code_map.get(lang, 'es')
+            audio, sr = kokoro_synthesize(text, lang_code)
+            if audio is None:
+                self._json({"error": "Kokoro synthesis failed"})
                 return
-            
-            audio_np = np.asarray(audio, dtype=np.float32)
-            audio_np = np.clip(audio_np, -1.0, 1.0)
-            int16 = (audio_np * 32767).astype(np.int16)
-            
-            data_size = len(int16) * 2
-            buf = bytearray(44 + data_size)
-            buf[0:4] = b'RIFF'
-            struct.pack_into('<I', buf, 4, data_size + 36)
-            buf[8:12] = b'WAVE'
-            buf[12:16] = b'fmt '
-            struct.pack_into('<I', buf, 16, 16)
-            struct.pack_into('<H', buf, 20, 1)
-            struct.pack_into('<H', buf, 22, 1)
-            struct.pack_into('<I', buf, 24, sr)
-            struct.pack_into('<I', buf, 28, sr * 2)
-            struct.pack_into('<H', buf, 32, 2)
-            struct.pack_into('<H', buf, 34, 16)
-            buf[36:40] = b'data'
-            struct.pack_into('<I', buf, 40, data_size)
-            buf[44:44+data_size] = int16.tobytes()
-            
+            wav_data = _make_wav(audio, sr)
             gen_time = int((time.time() - t0) * 1000)
-            audio_secs = len(int16) / sr
-            
+            audio_secs = len(audio) / sr if sr else 0
             self.send_response(200)
             self.send_header("Content-Type", "audio/wav")
-            self.send_header("Content-Length", str(len(buf)))
+            self.send_header("Content-Length", str(len(wav_data)))
             self.send_header("X-Generation-Time-Ms", str(gen_time))
             self.send_header("X-Audio-Duration-S", f"{audio_secs:.1f}")
+            self.send_header("X-TTS-Engine", "kokoro_onnx")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
-            self.wfile.write(bytes(buf))
-            
+            self.wfile.write(wav_data)
         except Exception as e:
             self._json({"error": str(e)[:200]})
-    
+
     def _handle_asr(self, body):
-        """Speech recognition with faster-whisper."""
+        """Sync ASR (no pipeline)."""
         t0 = time.time()
         try:
             data = json.loads(body)
             audio_b64 = data.get("audio", "")
             lang = data.get("lang", "auto")
-            
             if not audio_b64:
                 self._json({"error": "No audio"})
                 return
-            
             text, whisper_lang, error = transcribe_audio(audio_b64, lang)
             if error:
                 self._json({"error": error})
                 return
-            
             detected_lang = whisper_lang or detect_language(text)
             self._json({
                 "text": text,
@@ -716,7 +722,64 @@ class TranslatorHandler(SimpleHTTPRequestHandler):
             })
         except Exception as e:
             self._json({"error": str(e)[:200]})
-    
+
+    def _handle_pipeline(self, body):
+        """Async pipeline: submit audio → get translated audio back.
+        
+        Request:
+            {"audio_b64": "...", "from_lang": "auto", "to_lang": "ja"}
+        
+        Response (waits up to 10s for result):
+            {"original": "...", "translation": "...", "tts_time_ms": ..., 
+             "total_time_ms": ..., "audio": "<base64 wav>"}
+        """
+        try:
+            data = json.loads(body)
+            audio_b64 = data.get("audio", "") or data.get("audio_b64", "")
+            from_lang = data.get("from_lang", "auto")
+            to_lang = data.get("to_lang", "es")
+
+            if not audio_b64:
+                self._json({"error": "No audio"})
+                return
+
+            # Submit to async pipeline
+            request_id = _pipeline.submit_audio(
+                audio_b64, from_lang, to_lang,
+                request_id=f"req_{int(time.time()*1000)}"
+            )
+
+            # Wait for result (blocking but pipeline runs async)
+            result = _pipeline.get_result(request_id, timeout=10)
+
+            if result is None:
+                self._json({"error": "Pipeline timeout (10s)"})
+                return
+
+            if 'error' in result:
+                self._json(result)
+                return
+
+            # Encode audio for response
+            wav_b64 = base64.b64encode(result['wav_data']).decode() if result.get('wav_data') else None
+            self._json({
+                "original": result['original'],
+                "translation": result['translation'],
+                "from_lang": result['from_lang'],
+                "to_lang": result['to_lang'],
+                "from_lang_name": result['from_lang_name'],
+                "to_lang_name": result['to_lang_name'],
+                "asr_time_ms": result['asr_time_ms'],
+                "translation_time_ms": result['translation_time_ms'],
+                "tts_time_ms": result['tts_time_ms'],
+                "total_time_ms": result['total_time_ms'],
+                "audio_duration_s": result['audio_duration_s'],
+                "audio": wav_b64,
+            })
+
+        except Exception as e:
+            self._json({"error": str(e)[:200]})
+
     def _json(self, data):
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -724,49 +787,59 @@ class TranslatorHandler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
-    
+
     def log_message(self, fmt, *args):
         msg = fmt % args
         if "/api/" in msg:
             print(f"[Translator] {msg}")
 
 
-# ── MAIN ──
+# ── MAIN ───────────────────────────────────────────────────
 def main():
     print(f"\n{'='*50}")
-    print(f"  >> Alex Voice — Translator Server")
+    print(f"  >> Alex Voice — Translator Server v3 (Async Pipeline)")
     print(f"  >> Port: {PORT}")
-    print(f"  >> STT:   faster-whisper large-v3-turbo (GPU)")
-    print(f"  >> TRANS: argos-translate (CPU)")
-    print(f"  >> TTS:   Qwen3-TTS-CustomVoice (GPU)")
+    print(f"  >> STT:   faster-whisper small (GPU, ~1.5GB)")
+    print(f"  >> TRANS: Helsinki-NLP Opus-MT (transformers, ~100ms)")
+    print(f"  >> TTS:   Kokoro-82M ONNX (CPU, 0MB VRAM)")
+    print(f"  >> Pipeline: ASR→Trans→TTS (async threading)")
     print(f"{'='*50}\n")
-    
-    # Pre-load faster-whisper large-v3-turbo (GPU) — ~3GB download first time
-    if HAVE_WHISPER:
-        print(f"[Translator] Cargando faster-whisper large-v3-turbo en GPU...")
-        t0 = time.time()
-        _get_asr("large-v3-turbo")
-        print(f"[Translator] faster-whisper large-v3-turbo cargado en {time.time()-t0:.1f}s")
-    
-    # Pre-load core argos pairs
-    if _install_core_pairs():
-        print(f"[Translator] argos core pairs listos (EN↔ES↔JA)")
-    else:
-        print(f"[Translator] argos core pairs incompletos — se cargaran bajo demanda")
-    
-    # Iniciar servidor HTTP primero (rápido, no bloquea)
-    httpd = HTTPServer(("0.0.0.0", PORT), TranslatorHandler)
-    print(f"[Translator] Servidor HTTP listo en http://localhost:{PORT}")
-    print(f"[Translator] Qwen3-TTS se cargará BAJO DEMANDA (libera Whisper primero si es necesario)")
-    
+
+    # Start HTTP server FIRST (serves HTML immediately while models load)
+    httpd = ThreadingHTTPServer(("0.0.0.0", PORT), TranslatorHandler)
+    print(f"[Translator] HTTP server ready at http://localhost:{PORT}")
+
+    # Start async pipeline workers
+    _pipeline.start()
+
+    # Load models in background (so HTML is served immediately)
+    def _load_models():
+        if HAVE_WHISPER:
+            print("[Translator] Loading faster-whisper small...")
+            t0 = time.time()
+            _get_asr("small")
+            print(f"[Translator] ASR loaded in {time.time()-t0:.1f}s")
+
+        core_pairs = [('en', 'es'), ('es', 'en'), ('en', 'ja'), ('ja', 'en'), ('ja', 'es')]
+        loaded = 0
+        for fc, tc in core_pairs:
+            if _get_translation_model(fc, tc):
+                loaded += 1
+        print(f"[Translator] Translation models loaded: {loaded}/{len(core_pairs)}")
+
+        _get_kokoro_instance()
+        print("[Translator] All models loaded — pipeline ready")
+
+    threading.Thread(target=_load_models, daemon=True, name="model-loader").start()
+
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
-        print("\n[Translator] Cerrando...")
+        print("\n[Translator] Shutting down...")
     finally:
-        _unload_qwen3()
+        _pipeline.stop()
         httpd.server_close()
-        print("[Translator] Detenido.")
+        print("[Translator] Stopped.")
 
 
 if __name__ == "__main__":

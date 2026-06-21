@@ -51,6 +51,11 @@ def find_model(force_q8=False):
             return p, f"Modelo env ({p.name})", 8192
 
     local_models = [
+        # v2: Qwen2.5-3B — tool calling + multilingual (ES/EN/JA)
+        (PROJECT_ROOT / "models" / "qwen2.5-3b-instruct-q4_k_m.gguf", "Qwen2.5-3B-Instruct-Q4_K_M", 8192),
+        # v2 extended: Qwen3.5-4B — thinking mode + advanced reasoning
+        (PROJECT_ROOT / "models" / "qwen3.5-4b-instruct-q4_k_m.gguf", "Qwen3.5-4B-Instruct-Q4_K_M", 8192),
+        # Legacy fallback
         (PROJECT_ROOT / "models" / "qwen2.5-1.5b-q4_k_m.gguf", "Qwen2.5-1.5B-Q4_K_M", 8192),
         (PROJECT_ROOT / "models" / "qwen2.5-1.5b-instruct-q4_k_m.gguf", "Qwen2.5-1.5B-Q4_K_M", 8192),
     ]
@@ -376,6 +381,7 @@ def main():
     log(f"  📦 Modelo: {model_label}")
     log(f"  📐 Contexto: {ctx_size} tokens")
     log(f"  🎯 Plan: {plan_name} (puerto {port})")
+    log(f"  🧠 Tool Calling: {'Sí (Qwen2.5+)' if '3B' in model_label or '4B' in model_label else 'Limitado'}")
 
     # 2. Iniciar llama-server
     eprint()

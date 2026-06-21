@@ -4,13 +4,21 @@ set -e
 # ═══════════════════════════════════════════════════════════════
 #  Alex Voice — Setup Script for Linux (Ubuntu/Debian)
 # ═══════════════════════════════════════════════════════════════
+#  v3.1 Architecture (June 2026):
+#    - LLM: Ollama API → prometheus-orchestrator (Qwen3.5 4B Instruct, 262K ctx)
+#    - TTS: Kokoro ONNX (CPU, 0 VRAM)
+#    - Translation: Helsinki-NLP Opus-MT via transformers (~100ms)
+#    - VAD: Silero VAD (CPU) — pre-filter before Whisper ASR
+#    - Romanization: Cutlet (Japanese) — replaces LLM-based TTS_READING
+#
 #  Usage: chmod +x setup.sh && ./setup.sh
 #
 #  Requires:
-#    - Ubuntu 22.04+ / Debian 12+
+#    - Ubuntu 22.04+ / Debian 12+ / Kali Linux
 #    - NVIDIA GPU with 6GB+ VRAM
 #    - Python 3.10+
 #    - CUDA 12.4+ drivers installed
+#    - Ollama 0.30+ (installed separately: curl -fsSL https://ollama.com/install.sh | sh)
 # ═══════════════════════════════════════════════════════════════
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -30,35 +38,9 @@ err()   { echo -e "${RED}[✘]${NC} $1"; }
 
 echo ""
 echo "============================================="
-echo "    ⚡ Alex Voice — Linux Setup"
+echo "    ⚡ Alex Voice — Linux Setup (v3.1)"
 echo "============================================="
 echo ""
-
-# ═══════════════════════════════════════════════════════
-#  Helper: build llama-server from source (CUDA required)
-# ═══════════════════════════════════════════════════════
-build_llama_from_source() {
-    if ! command -v nvcc &>/dev/null && ! command -v nvidia-smi &>/dev/null; then
-        warn "CUDA not found. llama-server build will use CPU only (slow!)"
-        CMAKE_CUDA_FLAG="-DLLAMA_CUDA=OFF"
-    else
-        CMAKE_CUDA_FLAG="-DLLAMA_CUDA=ON"
-        ok "CUDA detected for llama.cpp build"
-    fi
-
-    if [ ! -d "llama.cpp" ]; then
-        info "Cloning llama.cpp..."
-        git clone --depth 1 https://github.com/ggml-org/llama.cpp.git
-    fi
-
-    cd llama.cpp
-    mkdir -p build && cd build
-    cmake .. $CMAKE_CUDA_FLAG -DCMAKE_BUILD_TYPE=Release
-    make -j$(nproc) llama-server
-    cp bin/llama-server "$ROOT/llama-server-bin/"
-    cd "$ROOT"
-    ok "llama-server built from source"
-}
 
 # ═══════════════════════════════════════════════════════
 #  Helper: download Piper TTS model
@@ -71,6 +53,21 @@ download_piper() {
     else
         info "Downloading $(basename $out)..."
         curl -sL "$url" -o "$out" && ok "$(basename $out) downloaded" || warn "Failed to download $(basename $out)"
+    fi
+}
+
+# ═══════════════════════════════════════════════════════
+#  Helper: download file with progress
+# ═══════════════════════════════════════════════════════
+download_file() {
+    local url="$1"
+    local out="$2"
+    local label="$3"
+    if [ -f "$out" ]; then
+        ok "$label already downloaded"
+    else
+        info "Downloading $label..."
+        curl -sL --show-progress "$url" -o "$out" && ok "$label downloaded" || warn "Failed to download $label"
     fi
 }
 
@@ -111,6 +108,7 @@ ok "pip updated"
 
 # ── 3. Python dependencies ────────────────────────────────
 info "[3/6] Installing Python packages..."
+
 # PyTorch CUDA
 python3 -c "import torch; exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null && \
     ok "PyTorch CUDA already installed" || {
@@ -119,57 +117,76 @@ python3 -c "import torch; exit(0 if torch.cuda.is_available() else 1)" 2>/dev/nu
     ok "PyTorch CUDA installed"
 }
 
-# Core packages
-pip install kokoro piper-tts faster-whisper qwen-tts argostranslate \
+# Core ML packages
+info "Installing core ML packages..."
+pip install faster-whisper \
+            onnxruntime silero-vad \
             psutil pynvml numpy 2>&1 | tail -5
-ok "Core packages installed"
+ok "Core ML packages installed"
 
-# ── 4. llama-server ───────────────────────────────────────
-info "[4/6] Setting up llama-server..."
-LLAMA_VERSION="b4746"  # Latest stable CUDA build for Linux
-LLAMA_DIR="$ROOT/llama-server-bin"
-mkdir -p "$LLAMA_DIR"
+# TTS: Kokoro ONNX (CPU, 0 VRAM)
+info "Installing Kokoro ONNX TTS..."
+pip install kokoro-onnx loguru scipy transformers num2words \
+            piper-tts 2>&1 | tail -5
+ok "Kokoro ONNX TTS installed"
 
-if [ -f "$LLAMA_DIR/llama-server" ]; then
-    ok "llama-server already downloaded"
+# Cutlet: Japanese romanization (replaces LLM-based TTS_READING)
+info "Installing Cutlet (Japanese romanization)..."
+pip install cutlet unidic-lite 2>&1 | tail -5
+ok "Cutlet installed"
+
+# HuggingFace Hub (for model downloads)
+pip install huggingface-hub -q 2>&1 | tail -3
+ok "HuggingFace Hub installed"
+
+# ── 4. Ollama + prometheus-orchestrator ─────────────────────
+info "[4/6] Setting up Ollama + LLM model..."
+
+# Check if Ollama is installed
+if command -v ollama &>/dev/null; then
+    ok "Ollama already installed"
 else
-    info "Downloading llama.cpp ($LLAMA_VERSION) for Linux..."
-    LLAMA_URL="https://github.com/ggml-org/llama.cpp/releases/download/$LLAMA_VERSION/llama-$LLAMA_VERSION-bin-ubuntu-x64.zip"
-    TMP_DIR=$(mktemp -d)
-
-    if curl -sL "$LLAMA_URL" -o "$TMP_DIR/llama.zip"; then
-        unzip -q -o "$TMP_DIR/llama.zip" -d "$TMP_DIR/extracted"
-        find "$TMP_DIR/extracted" -name "llama-server" -exec cp {} "$LLAMA_DIR/" \;
-        chmod +x "$LLAMA_DIR/llama-server" 2>/dev/null || true
-        rm -rf "$TMP_DIR"
-
-        if [ -f "$LLAMA_DIR/llama-server" ]; then
-            ok "llama-server downloaded and extracted"
-        else
-            warn "llama-server binary not found in release — building from source"
-            build_llama_from_source
-        fi
-    else
-        warn "Could not download — building llama-server from source..."
-        build_llama_from_source
-    fi
+    info "Ollama not found. Installing via official script..."
+    warn "This will require sudo access."
+    curl -fsSL https://ollama.com/install.sh | sh
+    ok "Ollama installed"
 fi
 
-# ── 5. Model ───────────────────────────────────────────────
-info "[5/6] Downloading LLM model..."
+# Check if Ollama is running
+if ! curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then
+    info "Starting Ollama service..."
+    ollama serve &
+    sleep 3
+fi
+
+# Pull prometheus-orchestrator (Qwen3.5 4B Instruct, ~2.9 GB)
+if ollama list 2>/dev/null | grep -q prometheus-orchestrator; then
+    ok "prometheus-orchestrator already downloaded (~3GB VRAM, 262K ctx)"
+else
+    info "Downloading prometheus-orchestrator (Qwen3.5 4B Instruct, ~2.9 GB)..."
+    info "This may take 5-10 minutes at 8MB/s..."
+    ollama pull prometheus-orchestrator
+    ok "prometheus-orchestrator downloaded"
+fi
+
+# ── 5. Kokoro ONNX models ─────────────────────────────────
+info "[5/6] Downloading Kokoro ONNX models..."
+mkdir -p "$ROOT/models/onnx"
+
+download_file \
+    "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx" \
+    "$ROOT/models/onnx/kokoro-v1.0.onnx" \
+    "Kokoro ONNX model (~311 MB)"
+
+download_file \
+    "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin" \
+    "$ROOT/models/onnx/voices-v1.0.bin" \
+    "Kokoro ONNX voices (~27 MB)"
+
+# ── 6. Piper TTS models + Translation ──────────────────────
+info "[6/6] Downloading Piper TTS + translation models..."
 mkdir -p "$ROOT/models"
 
-if [ -f "$ROOT/models/qwen2.5-1.5b-q4_k_m.gguf" ]; then
-    ok "Qwen2.5-1.5B Q4_K_M already downloaded"
-else
-    info "Downloading Qwen2.5-1.5B Q4_K_M (~1.1 GB)..."
-    curl -L -o "$ROOT/models/qwen2.5-1.5b-q4_k_m.gguf" \
-        "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf"
-    ok "Model downloaded"
-fi
-
-# ── 6. Piper models ───────────────────────────────────────
-info "[6/6] Downloading Piper TTS models..."
 download_piper \
     "https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_ES/sharvard/medium/es_ES-sharvard-medium.onnx" \
     "$ROOT/models/es_ES-sharvard-medium.onnx"
@@ -178,34 +195,139 @@ download_piper \
     "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx" \
     "$ROOT/models/en_US-lessac-medium.onnx"
 
-# ── Argos packages ─────────────────────────────────────────
-info "[Extra] Installing argos-translate packages (EN↔ES↔JA)..."
-# venv already active from step 2
+# Pre-download translation models
+mkdir -p "$ROOT/models/translation"
+
 python3 -c "
-import argostranslate.package as p
-p.update_package_index()
-avail = p.get_available_packages()
-installed = {(x.from_code, x.to_code) for x in p.get_installed_packages()}
-pairs = [('en','es'),('es','en'),('en','ja'),('ja','en')]
-for fc, tc in pairs:
-    if (fc, tc) not in installed:
-        pkg = next((x for x in avail if x.from_code == fc and x.to_code == tc), None)
-        if pkg:
-            path = pkg.download()
-            p.install_from_path(path)
-            print(f'  ✔ {fc}->{tc} installed')
-        else:
-            print(f'  ⚠ {fc}->{tc} not available')
-print('  ✔ argos EN/ES/JA ready')
+from transformers import MarianMTModel, MarianTokenizer
+import time
+
+models = [
+    'Helsinki-NLP/opus-mt-en-es',
+    'Helsinki-NLP/opus-mt-es-en',
+    'Helsinki-NLP/opus-mt-en-jap',  # Note: 'jap' not 'ja' for EN→JA
+    'Helsinki-NLP/opus-mt-ja-en',
+    'Helsinki-NLP/opus-mt-ja-es',
+]
+
+for model_name in models:
+    try:
+        t0 = time.time()
+        tok = MarianTokenizer.from_pretrained(model_name)
+        model = MarianMTModel.from_pretrained(model_name)
+        elapsed = (time.time() - t0)
+        print(f'  ✔ {model_name} ({elapsed:.1f}s)')
+    except Exception as e:
+        print(f'  ⚠ {model_name}: {e}')
+
+print('  ✔ All translation models ready (cached by transformers)')
 " 2>&1
+
+# ═══════════════════════════════════════════════════════════════
+#  Verification
+# ═══════════════════════════════════════════════════════════════
+echo ""
+info "Verifying installation..."
+
+python3 -c "
+import sys
+print(f'Python: {sys.version}')
+
+# Core deps
+try:
+    import torch
+    print(f'PyTorch: {torch.__version__} CUDA={torch.cuda.is_available()}')
+except: print('PyTorch: MISSING')
+
+try:
+    import faster_whisper
+    print('faster-whisper: OK')
+except: print('faster-whisper: MISSING')
+
+try:
+    from transformers import MarianMTModel
+    print('transformers (MarianMT): OK')
+except: print('transformers: MISSING')
+
+try:
+    from kokoro_onnx import Kokoro
+    print('kokoro-onnx: OK')
+except: print('kokoro-onnx: MISSING')
+
+try:
+    import onnxruntime
+    print(f'onnxruntime: {onnxruntime.__version__}')
+except: print('onnxruntime: MISSING')
+
+try:
+    from silero_vad import load_silero_vad
+    print('silero-vad: OK')
+except: print('silero-vad: MISSING')
+
+try:
+    import cutlet
+    print('cutlet: OK')
+except: print('cutlet: MISSING')
+
+try:
+    import piper
+    print('piper-tts: OK')
+except: print('piper-tts: MISSING')
+
+print()
+print('=== Model files ===')
+import os
+models_dir = os.environ.get('MODELS_DIR', '$ROOT/models')
+onnx_dir = os.path.join(models_dir, 'onnx')
+
+# Ollama (LLM)
+import subprocess
+result = subprocess.run(['ollama', 'list'], capture_output=True, text=True)
+if 'prometheus-orchestrator' in result.stdout:
+    print('LLM (Ollama): prometheus-orchestrator ✅')
+else:
+    print('LLM (Ollama): prometheus-orchestrator ❌ NOT FOUND — run: ollama pull prometheus-orchestrator')
+
+# Kokoro ONNX
+kokoro_onnx = os.path.join(onnx_dir, 'kokoro-v1.0.onnx')
+kokoro_voices = os.path.join(onnx_dir, 'voices-v1.0.bin')
+print(f'Kokoro ONNX: {\"OK\" if os.path.exists(kokoro_onnx) else \"MISSING\"}')
+print(f'Kokoro voices: {\"OK\" if os.path.exists(kokoro_voices) else \"MISSING\"}')
+
+# Piper
+piper_es = os.path.join(models_dir, 'es_ES-sharvard-medium.onnx')
+piper_en = os.path.join(models_dir, 'en_US-lessac-medium.onnx')
+print(f'Piper ES: {\"OK\" if os.path.exists(piper_es) else \"MISSING\"}')
+print(f'Piper EN: {\"OK\" if os.path.exists(piper_en) else \"MISSING\"}')
+
+# Translation (Helsinki-NLP Opus-MT via transformers)
+print('Translation models: Cached by transformers (Helsinki-NLP/opus-mt-*)')
+"
 
 echo ""
 echo "============================================="
-echo -e "    ${GREEN}✅ Setup Complete${NC}"
+echo -e "    ${GREEN}✅ Setup Complete (v3.1)${NC}"
 echo "============================================="
 echo ""
+echo ""
+echo "   ℹ️  This setup no longer uses direct llama-server or GGUF files."
+echo "      You can free ~5GB by removing old files from v2:"
+echo "      rm -rf llama-server-bin models/qwen2.5-3b-instruct* models/qwen3.5-4b-instruct*"
+echo ""
+echo "   Architecture v3.1:"
+echo "     • LLM:      Ollama API → prometheus-orchestrator (Qwen3.5 4B Instruct, 262K ctx)"
+echo "     • TTS:      Kokoro ONNX (CPU, 0 VRAM) — 54 voices, 5 languages"
+echo "     • Translation: Opus-MT via transformers (~100ms)"
+echo "     • VAD:      Silero VAD (CPU) — pre-filter before Whisper ASR"
+echo "     • Romanization: Cutlet (Japanese)"
+echo ""
+echo "   VRAM Budget:"
+echo "     • Teacher/Conversation: Ollama (~3.0GB) + ASR (~1.5GB) = ~4.5GB"
+echo "     • Translator:          ASR (~1.5GB) + Opus-MT (GPU) = ~1.7GB"
+echo "     • TTS: 0 VRAM (CPU only — Kokoro ONNX + Piper)"
+echo ""
 echo "   Next steps:"
-echo "     1. ./run.sh          — Opens menu at http://localhost:5000"
+echo "     1. ./alex-voice.sh    — Opens menu at http://localhost:5000"
 echo "     2. source venv/bin/activate"
 echo "        python3 menu_server.py"
 echo ""
