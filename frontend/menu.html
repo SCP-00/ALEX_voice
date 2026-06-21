@@ -259,7 +259,7 @@ body::before{
       <h3>Teacher</h3>
       <p>Aprende con explicaciones, pronunciación fonética y ejercicios interactivos</p>
       <div class="resources">
-        <span>🧠 Qwen2.5-3B</span>
+        <span>🧠 Qwen3.5-4B</span>
         <span>🎙 Kokoro TTS</span>
         <span>📝 Multi-output</span>
       </div>
@@ -272,9 +272,9 @@ body::before{
       <h3>Conversación</h3>
       <p>Charla natural con memoria de contexto largo y personalidad</p>
       <div class="resources">
-        <span>🧠 Llama-3.2-3B</span>
+        <span>🧠 Qwen3.5-4B</span>
         <span>🎙 Kokoro TTS</span>
-        <span>💾 128K ctx</span>
+        <span>💾 262K ctx</span>
       </div>
       <button class="start-btn" id="btnConv">Iniciar</button>
     </div>
@@ -423,8 +423,8 @@ async function stopMode() {
 function showLoading(mode) {
   document.getElementById('loadingOverlay').classList.add('show');
   const labels = {
-    teacher: {title: '🎓 Iniciando Teacher', desc: 'Cargando Qwen2.5-3B en GPU + Kokoro TTS...'},
-    conv: {title: '💬 Iniciando Conversación', desc: 'Cargando Llama-3.2-3B en GPU + Kokoro TTS...'},
+    teacher: {title: '🎓 Iniciando Teacher', desc: 'Cargando Qwen3.5-4B en GPU + Kokoro TTS...'},
+    conv: {title: '💬 Iniciando Conversación', desc: 'Cargando Qwen3.5-4B en GPU + Kokoro TTS...'},
     translator: {title: '🌍 Iniciando Traductor', desc: 'Cargando ASR + Opus-MT MarianMT + Kokoro ONNX...'},
   };
   document.getElementById('loadTitle').textContent = labels[mode]?.title || 'Iniciando...';

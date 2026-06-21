@@ -23,7 +23,7 @@ for arg in "$@"; do
 done
 
 BASE_URL="http://localhost:3000"
-LLAMA_URL="http://localhost:8081"
+LLAMA_URL="http://localhost:11434/v1"
 TRANSLATOR_URL="http://localhost:3003"
 TESTS_PASSED=0
 TESTS_FAILED=0
@@ -47,11 +47,11 @@ else
   fail "Teacher+Conversation NO responde en $BASE_URL — ejecuta: python launcher.py"
 fi
 
-# llama-server (backend LLM en GPU)
-if curl -sf --connect-timeout 3 "$LLAMA_URL/slots" > /dev/null 2>&1; then
-  pass "llama-server corriendo en $LLAMA_URL"
+# Ollama API (backend LLM en GPU)
+if curl -sf --connect-timeout 3 "$LLAMA_URL/models" > /dev/null 2>&1; then
+  pass "Ollama API corriendo en $LLAMA_URL"
 else
-  fail "llama-server NO responde en $LLAMA_URL — ejecuta llama-server"
+  fail "Ollama API NO responde en $LLAMA_URL — ejecuta 'ollama serve'"
 fi
 
 # Translator server (opcional)
@@ -67,9 +67,9 @@ fi
 header "2. Endpoint /api/stats"
 
 STATS=$(curl -sf --connect-timeout 5 "$BASE_URL/api/stats" 2>&1)
-if echo "$STATS" | python -c "import sys,json;d=json.load(sys.stdin);assert 'vram_used_mb' in d;assert 'llama_connected' in d" 2>/dev/null; then
-  VRAM=$(echo "$STATS" | python -c "import sys,json;print(json.load(sys.stdin)['vram_used_mb'])")
-  LLAMA=$(echo "$STATS" | python -c "import sys,json;print(json.load(sys.stdin)['llama_connected'])")
+if echo "$STATS" | python3 -c "import sys,json;d=json.load(sys.stdin);assert 'vram_used_mb' in d;assert 'llama_connected' in d" 2>/dev/null; then
+  VRAM=$(echo "$STATS" | python3 -c "import sys,json;print(json.load(sys.stdin)['vram_used_mb'])")
+  LLAMA=$(echo "$STATS" | python3 -c "import sys,json;print(json.load(sys.stdin)['llama_connected'])")
   pass "/api/stats — VRAM: ${VRAM}MB, llama: $LLAMA"
 else
   fail "/api/stats no devuelve datos válidos"
@@ -123,10 +123,10 @@ fi
 if [ "$QUICK" = false ]; then
 header "5. LLM — Modo Teacher"
 
-  RESP=$(curl -sf --connect-timeout 120 -X POST "$BASE_URL/api/chat" \
+  RESP=$(curl -sf --max-time 120 -X POST "$BASE_URL/api/chat" \
     -H "Content-Type: application/json" \
     -d '{"messages":[{"role":"user","content":"Explain what artificial intelligence is in 2 sentences in Spanish."}],"mode":"teacher","n_predict":256,"temperature":0.5,"stream":false}' 2>&1)
-  CONTENT=$(echo "$RESP" | python -c "import sys,json;d=json.load(sys.stdin);c=d.get('choices',[{}])[0].get('message',{}).get('content','');print(c[:150])" 2>/dev/null)
+  CONTENT=$(echo "$RESP" | python3 -c "import sys,json;d=json.load(sys.stdin);c=d.get('choices',[{}])[0].get('message',{}).get('content','');print(c[:150])" 2>/dev/null)
   if [ -n "$CONTENT" ]; then
     pass "Teacher ES — respuesta: ${CONTENT}..."
   else
@@ -135,10 +135,10 @@ header "5. LLM — Modo Teacher"
 
 header "5. LLM — Modo Conversación"
 
-  RESP=$(curl -sf --connect-timeout 120 -X POST "$BASE_URL/api/chat" \
+  RESP=$(curl -sf --max-time 120 -X POST "$BASE_URL/api/chat" \
     -H "Content-Type: application/json" \
     -d '{"messages":[{"role":"user","content":"Hola, ¿cómo estás?"}],"mode":"conversation","n_predict":128,"temperature":0.7,"stream":false}' 2>&1)
-  CONTENT=$(echo "$RESP" | python -c "import sys,json;d=json.load(sys.stdin);c=d.get('choices',[{}])[0].get('message',{}).get('content','');print(c[:150])" 2>/dev/null)
+  CONTENT=$(echo "$RESP" | python3 -c "import sys,json;d=json.load(sys.stdin);c=d.get('choices',[{}])[0].get('message',{}).get('content','');print(c[:150])" 2>/dev/null)
   if [ -n "$CONTENT" ]; then
     pass "Conversación ES — respuesta: ${CONTENT}..."
   else
@@ -163,8 +163,8 @@ if [ $TESTS_FAILED -eq 0 ]; then
   echo "  │ Componente                         │ Estado   │"
   echo "  ├─────────────────────────────────────┼──────────┤"
   echo "  │ Teacher+Conversation (puerto 3000) │ ✅      │"
-  echo "  │ llama-server (puerto 8081)         │ ✅      │"
-  echo "  │ Translator (puerto 3003, separado) │ ✅      │"
+  echo "  │ Ollama API (puerto 11434)          │ ✅      │"
+  echo "  │ Translator (puerto 3003)           │ ✅      │"
   echo "  │ TTS Español (Kokoro/Piper)         │ ✅      │"
   echo "  │ TTS Inglés (Kokoro/Piper)          │ ✅      │"
   echo "  │ API /api/stats                     │ ✅      │"

@@ -84,58 +84,91 @@
 
 ---
 
-## 🔜 Pendiente (v3.2)
+## ✅ v3.2 Completado — Streaming SSE + Stale Ref Fixes + Tests
 
-### Prioridad Alta
-- [ ] **Streaming pipeline** — WebSocket/SSE para audio chunk-by-chunk en vez de esperar resultado completo
-- [ ] **Fix translator.html stale refs** — CT2→MarianMT, qwen3_loaded→transformers_loaded
+### 📡 Streaming SSE para Chat LLM
+- ✅ **SSE Streaming** en Teacher (index.html) y Conversation (conv.html)
+- ✅ Tokens aparecen en tiempo real via `ReadableStream` reader
+- ✅ Teacher mode: `parseMultiOutput()` client-side + `renderTeacherCards()` para cards estructuradas post-stream
+- ✅ Conversation voice flow: streaming también activo en `toggleMic()`
+- ✅ Fallback automático a full JSON para respuestas cacheadas
+- ✅ Botones Hablar/Copiar + timestamp al completar stream
 
-### Prioridad Media
-- [ ] **Grammar exercises interactivos** — Ejercicios en Teacher mode con feedback
-- [ ] **Progress tracking** — Historial de aprendizaje del usuario
-- [ ] **Multi-speaker Conversation** — Voces diferentes para usuario vs asistente
+### 🧹 Stale Refs Fixes
+- ✅ **menu.html**: Qwen2.5-3B → Qwen3.5-4B, Llama-3.2-3B → Qwen3.5-4B, 128K→262K ctx
+- ✅ **Desktop file**: ownership root→buendia001
+- ✅ **test_alex_voice.sh**: URLs actualizadas (8081→11434/v1), llama-server→Ollama, python→python3
 
-### Prioridad Baja
-- [ ] **Tests unitarios** — translator.py pipeline, prompts.py parsing, server.py TTS
-- [ ] **CI/CD** — GitHub Actions para lint + test
-- [ ] **Mobile optimization** — Voice visualizer para bajo consumo
+### 📊 Tests Actualizados
+- ✅ URLs y comandos para Ollama API
+- ✅ Coverage table refleja arquitectura v3.1
+
+### 🔧 Optimizaciones
+- ✅ Menos código duplicado: `addMsg()` simplificado, `renderTeacherCards()` reutilizable
+- ✅ Status/pulse states correctos en todos los flujos
 
 ---
 
-## 📐 Decisiones de Diseño v3
+## 📊 Métricas v3.2
 
-### ¿Por qué solo UNO activo a la vez?
-- RTX 3050 6GB: Teacher/Conversation usan ~4.5GB, Translator ~1.7GB
-- Dos modos simultáneos = ~6.2GB — no cabe en VRAM
-- Un solo modo = VRAM completa disponible = máxima fluidez
+### VRAM Budget (sin cambios)
+| Modo | Componentes | VRAM |
+|:-----|:------------|:----:|
+| Teacher | Ollama (~3.0GB) + Whisper small (GPU) | **~4.5 GB** |
+| Conversation | Ollama (~3.0GB) + Whisper small (GPU) | **~4.5 GB** |
+| Translator | Whisper small (GPU) + MarianMT (GPU) | **~1.7 GB** |
 
-### ¿Por qué async pipeline?
-- Secuencial: ASR(50ms) + Trans(100ms) + TTS(150ms) = **300ms por oración**
-- Async: TTS de oración N + ASR de oración N+1 = **~150ms percepción**
-- El usuario escucha respuesta casi inmediata mientras el GPU procesa el siguiente chunk
+### UX Improvements (v3.2)
+| Feature | Antes | Ahora |
+|:--------|:------|:------|
+| Respuesta LLM | Esperar texto completo | **Streaming en vivo token por token** |
+| Teacher cards | Solo con full JSON | **Cards post-streaming** |
+| Voice flow conv | Esperar texto completo | **Streaming en vivo** |
+| Status voice conv | Podía quedarse "Generando..." | **✅ Listo siempre** |
 
-### ¿Por qué Ollama API en vez de llama-server directo?
-- Ollama gestiona automáticamente carga/descarga de modelos en VRAM
-- `keep_alive: "0m"` libera VRAM inmediatamente al cambiar de modo
-- OpenAI-compatible API → mismo código que para APIs cloud
-- No más binarios de llama-server compilados sin CUDA
-- Thinking mode desactivado evita timeouts en JA
+## 🔜 Pendiente (v3.3)
 
-### ¿Por qué prometheus-orchestrator (Qwen3.5 4B Instruct) sobre Qwen2.5-3B/4B?
-- **Instruct** (no coder) entiende y genera texto correctamente en 3 idiomas
-- Qwen3.5 es #1 en multilingüe (100+ idiomas soportados)
-- 4.3B params cabe en ~3GB VRAM con margen para Whisper
-- 262K contexto = conversaciones mucho más largas que 32K
-- 43 tok/s promedio = 3x más rápido que coder:3b
+### Prioridad Alta
+- [ ] **Grammar exercises interactivos** — Ejercicios en Teacher mode con feedback
+- [ ] **Progress tracking** — Historial de aprendizaje del usuario
+
+### Prioridad Media
+- [ ] **Multi-speaker Conversation** — Voces diferentes para usuario vs asistente
+- [ ] **Mobile optimization** — Voice visualizer para bajo consumo
+
+### Prioridad Baja
+- [ ] **CI/CD** — GitHub Actions para lint + test
+- [ ] **Grammar exercises** (continuación)
+
+---
+
+## 📐 Decisiones de Diseño v3.2
+
+### ¿Por qué SSE streaming y no WebSocket?
+- SSE es más simple: usa HTTP normal, no necesita protocolo especial
+- `ReadableStream` reader funciona directamente con fetch API
+- El servidor ya soportaba SSE (`stream: true`), solo faltaba el frontend
+- WebSocket añadiría complejidad sin beneficio claro para chat de texto
+
+### ¿Por qué parser client-side para Teacher cards?
+- El servidor devuelve `parsed` solo en modo non-streaming
+- Con streaming, los tokens llegan sin estructura
+- Un parser JS simple (`【TAG】content`) funciona en milisegundos
+- Evita tener que esperar el response completo para ver cards
+
+### ¿Por qué streaming también en voice flow?
+- Consistencia: misma UX para texto escrito y voz
+- El usuario ve la respuesta aparecer mientras habla
+- TTS puede empezar antes si se implementa chunked playback
 
 ---
 
 ## 📈 Roadmap
 
-### v3.2 (Julio 2026)
-- [ ] Streaming pipeline con WebSocket
+### v3.3 (Julio 2026)
 - [ ] Grammar exercises interactivos
-- [ ] Tests unitarios
+- [ ] Progress tracking
+- [ ] Multi-speaker TTS
 
 ### v4 (Q4 2026)
 - [ ] MCP integration — Servidor MCP para otros agentes
@@ -145,5 +178,5 @@
 ---
 
 *Plan actualizado: Junio 2026*
-*Proyecto: ALEX_voice v3.1*
+*Proyecto: ALEX_voice v3.2*
 *Autor: SCP-076 (Victor Buendia) + Buffy (AI Agent)*

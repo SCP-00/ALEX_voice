@@ -195,20 +195,73 @@ async function send(){
   const input=document.getElementById('input');
   const text=input.value.trim();if(!text||isProcessing)return;
   addMsg('user',text);input.value='';input.style.height='auto';
-  isProcessing=true;setThinking(true);setStatus('🧠 Pensando...');
+  
+  // Create placeholder for streaming
+  const placeholderDiv=document.createElement('div');
+  placeholderDiv.className='msg assistant';
+  const placeholderSpan=document.createElement('span');
+  placeholderSpan.textContent='';
+  placeholderDiv.appendChild(placeholderSpan);
+  document.getElementById('msgs').appendChild(placeholderDiv);
+  
+  isProcessing=true;setThinking(true);setStatus('🧠 Generando...');
   try{
     const userMsg={role:'user',content:text};
     const msgs=messageHistory.concat([userMsg]);
     const r=await fetch(API+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({messages:msgs,mode:'conversation',n_predict:512,temperature:0.7,stream:false})});
-    const data=await r.json();
-    const content=(data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content)||data.content||'[sin respuesta]';
-    addMsg('assistant',content);
-    messageHistory.push(userMsg,{role:'assistant',content});
+      body:JSON.stringify({messages:msgs,mode:'conversation',n_predict:512,temperature:0.7,stream:true})});
+    
+    const ct=r.headers.get('Content-Type')||'';
+    let fullContent='';
+    
+    if(ct.includes('text/event-stream')){
+      const reader=r.body.getReader();
+      const decoder=new TextDecoder();
+      let buf='';
+      while(true){
+        const{done,value}=await reader.read();
+        if(done)break;
+        buf+=decoder.decode(value,{stream:true});
+        const lines=buf.split('\n');
+        buf=lines.pop();
+        for(const line of lines){
+          if(line.startsWith('data: ')){
+            const d=line.slice(6).trim();
+            if(d&&d!=='[DONE]'){
+              try{
+                const p=JSON.parse(d);
+                const delta=p.choices[0].delta.content||'';
+                if(delta){fullContent+=delta;placeholderSpan.textContent=fullContent;placeholderDiv.scrollIntoView({behavior:'smooth'})}
+              }catch(e){}
+            }
+          }
+        }
+      }
+    }else{
+      const data=await r.json();
+      fullContent=(data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content)||data.content||'[sin respuesta]';
+      placeholderSpan.textContent=fullContent;
+    }
+    
+    if(!fullContent)fullContent='[sin respuesta]';
+    placeholderSpan.textContent=fullContent;
+    
+    // Add toolbar
+    const tb=document.createElement('div');tb.className='msg-toolbar';
+    const spk=document.createElement('button');spk.textContent='🔊 Hablar';
+    spk.onclick=()=>speakTTS(fullContent);tb.appendChild(spk);
+    const cpy=document.createElement('button');cpy.textContent='📋 Copiar';
+    cpy.onclick=()=>{navigator.clipboard.writeText(fullContent);cpy.textContent='✅';setTimeout(()=>cpy.textContent='📋 Copiar',1500)};tb.appendChild(cpy);
+    placeholderDiv.appendChild(tb);
+    
+    const ts=document.createElement('div');ts.className='ts';ts.textContent=new Date().toLocaleTimeString();
+    placeholderDiv.appendChild(ts);
+    
+    messageHistory.push(userMsg,{role:'assistant',content:fullContent});
     if(messageHistory.length>20)messageHistory=messageHistory.slice(-20);
     setStatus('✅ Listo');
-    if(content.length<500&&!isRecording)speakTTS(content);
-  }catch(e){addMsg('assistant','⚠️ '+e.message);setStatus('❌ Error')}
+    if(fullContent.length<500&&!isRecording)speakTTS(fullContent);
+  }catch(e){placeholderSpan.textContent='⚠️ '+e.message;setStatus('❌ Error')}
   isProcessing=false;setThinking(false);
 }
 
@@ -228,7 +281,7 @@ async function speakTTS(text){
     const src=audioCtx.createBufferSource();src.buffer=final;src.connect(audioCtx.destination);src.start(0);
     isTtsPlaying=true;setPulse('speaking');
     src.onended=()=>{isTtsPlaying=false;setPulse('stopped');setStatus('✅ Listo')};
-  }catch(e){setPulse('stopped')}
+  }catch(e){setPulse('stopped');setStatus('✅ Listo')}
 }
 
 async function playBlob(blob){
@@ -255,15 +308,39 @@ async function toggleMic(){
         if(!d.text||d.text.length<2){setPulse('stopped');return}
         document.getElementById('asrLine').textContent='🗣️ '+d.text;
         const userMsg={role:'user',content:d.text};const msgs=messageHistory.concat([userMsg]);
+        addMsg('user',d.text);
+        // Create placeholder for streaming voice response
+        const vPlaceholderDiv=document.createElement('div');
+        vPlaceholderDiv.className='msg assistant';
+        const vPlaceholderSpan=document.createElement('span');
+        vPlaceholderSpan.textContent='';
+        vPlaceholderDiv.appendChild(vPlaceholderSpan);
+        document.getElementById('msgs').appendChild(vPlaceholderDiv);
         isProcessing=true;setThinking(true);
-        const cr=await fetch(API+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:msgs,mode:'conversation',n_predict:512,temperature:0.7,stream:false})});
-        const cd=await cr.json();
-        const cc=(cd.choices&&cd.choices[0]&&cd.choices[0].message&&cd.choices[0].message.content)||cd.content||'';
-        addMsg('user',d.text);addMsg('assistant',cc);
-        messageHistory.push(userMsg,{role:'assistant',content:cc});
+        let vFullContent='';
+        try{
+          const cr=await fetch(API+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:msgs,mode:'conversation',n_predict:512,temperature:0.7,stream:true})});
+          const ct=cr.headers.get('Content-Type')||'';
+          if(ct.includes('text/event-stream')){
+            const reader=cr.body.getReader();const decoder=new TextDecoder();let buf='';
+            while(true){const{done,value}=await reader.read();if(done)break;buf+=decoder.decode(value,{stream:true});const lines=buf.split('\n');buf=lines.pop();for(const line of lines){if(line.startsWith('data: ')){const d=line.slice(6).trim();if(d&&d!=='[DONE]'){try{const p=JSON.parse(d);const delta=p.choices[0].delta.content||'';if(delta){vFullContent+=delta;vPlaceholderSpan.textContent=vFullContent;vPlaceholderDiv.scrollIntoView({behavior:'smooth'})}}catch(e){}}}}}
+          }else{const cd=await cr.json();vFullContent=(cd.choices&&cd.choices[0]&&cd.choices[0].message&&cd.choices[0].message.content)||cd.content||'';vPlaceholderSpan.textContent=vFullContent}
+        }catch(e){vPlaceholderSpan.textContent='⚠️ Error'}
+        if(!vFullContent)vFullContent='[sin respuesta]';vPlaceholderSpan.textContent=vFullContent;
+        setStatus('✅ Listo');
+        // Add toolbar
+        const vTb=document.createElement('div');vTb.className='msg-toolbar';
+        const vSpk=document.createElement('button');vSpk.textContent='🔊 Hablar';
+        vSpk.onclick=()=>speakTTS(vFullContent);vTb.appendChild(vSpk);
+        const vCpy=document.createElement('button');vCpy.textContent='📋 Copiar';
+        vCpy.onclick=()=>{navigator.clipboard.writeText(vFullContent);vCpy.textContent='✅';setTimeout(()=>vCpy.textContent='📋 Copiar',1500)};vTb.appendChild(vCpy);
+        vPlaceholderDiv.appendChild(vTb);
+        const vTs=document.createElement('div');vTs.className='ts';vTs.textContent=new Date().toLocaleTimeString();
+        vPlaceholderDiv.appendChild(vTs);
+        messageHistory.push(userMsg,{role:'assistant',content:vFullContent});
         if(messageHistory.length>20)messageHistory=messageHistory.slice(-20);
         isProcessing=false;setThinking(false);
-        if(cc.length<500)speakTTS(cc);else setPulse('stopped');
+        if(vFullContent.length<500)speakTTS(vFullContent);else setPulse('stopped');
       }catch(e){setPulse('stopped')}
     };
     mediaRecorder.start();isRecording=true;setPulse('listening');setStatus('🎤 Grabando...');

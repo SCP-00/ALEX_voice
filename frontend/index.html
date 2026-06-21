@@ -267,6 +267,46 @@ function addMsg(role,text,extra={}){
 
 function esc(s){return s?s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'):''}
 
+function parseMultiOutput(text){
+  const result={text:'',tts_reading:'',pronunciation:'',translation:'',explanation:'',exercise:''};
+  if(!text)return result;
+  const re=/【([^】]+)】\s*([\s\S]*?)(?=【|$)/g;
+  let m;
+  while((m=re.exec(text))!==null){
+    const tag=m[1].trim().toUpperCase();
+    const val=m[2].trim();
+    if(tag==='TEXT')result.text=val;
+    else if(tag==='TTS_READING')result.tts_reading=val;
+    else if(tag==='PRONUNCIATION'||tag==='ROMANJI')result.pronunciation=val;
+    else if(tag==='TRANSLATION'||tag==='TRANS')result.translation=val;
+    else if(tag==='EXPLANATION')result.explanation=val;
+    else if(tag==='EXERCISE')result.exercise=val;
+  }
+  if(!result.text)result.text=text;
+  return result;
+}
+
+function renderTeacherCards(parsed){
+  if(!parsed||Object.keys(parsed).length===0)return null;
+  const cards=document.createElement('div');cards.className='lesson-cards';
+  const order=[
+    {key:'text',cls:'card-target',icon:'🔊',label:'Idioma Objetivo'},
+    {key:'tts_reading',cls:'card-romaji',icon:'🗣️',label:'Lectura TTS'},
+    {key:'pronunciation',cls:'card-pronunciation',icon:'🔤',label:'Pronunciación'},
+    {key:'translation',cls:'card-translation',icon:'🌍',label:'Traducción'},
+    {key:'explanation',cls:'card-explanation',icon:'📖',label:'Explicación'},
+    {key:'exercise',cls:'card-exercise',icon:'💪',label:'Ejercicio'},
+  ];
+  for(const c of order){
+    const val=parsed[c.key];
+    if(!val||val==='N/A')continue;
+    const card=document.createElement('div');card.className='lesson-card '+c.cls;
+    card.innerHTML=`<div class="card-label"><span class="dot"></span>${c.icon} ${c.label}</div><div class="card-text">${esc(val)}</div>`;
+    cards.appendChild(card);
+  }
+  return cards.childNodes.length>0?cards:null;
+}
+
 function setThinking(on){document.getElementById('think').classList.toggle('show',on);document.getElementById('sendBtn').disabled=on;document.getElementById('micBtn').disabled=on}
 function setStatus(m){document.getElementById('footerStatus').textContent=m}
 
@@ -275,22 +315,88 @@ async function send(){
   const text=input.value.trim();
   if(!text||isProcessing)return;
   addMsg('user',text);input.value='';input.style.height='auto';
-  isProcessing=true;setThinking(true);setStatus('🧠 Pensando...');
+  
+  // Create placeholder assistant message for streaming
+  const placeholderDiv=document.createElement('div');
+  placeholderDiv.className='msg assistant';
+  const placeholderSpan=document.createElement('span');
+  placeholderSpan.textContent='';
+  placeholderDiv.appendChild(placeholderSpan);
+  document.getElementById('msgs').appendChild(placeholderDiv);
+  
+  isProcessing=true;setThinking(true);setStatus('🧠 Generando...');
   try{
     const userMsg={role:'user',content:text};
     const msgs=messageHistory.concat([userMsg]);
     const r=await fetch(API_BASE+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({messages:msgs,mode:currentMode,n_predict:512,temperature:0.5,stream:false})});
-    const data=await r.json();
-    const content=(data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content)||data.content||'[sin respuesta]';
-    const parsed=data.parsed||{};
-    addMsg('assistant',content,{cached:data.cached===true,parsed});
-    messageHistory.push(userMsg,{role:'assistant',content});
+      body:JSON.stringify({messages:msgs,mode:currentMode,n_predict:512,temperature:0.5,stream:true})});
+    
+    // Check if it's SSE streaming or full JSON
+    const ct=r.headers.get('Content-Type')||'';
+    let fullContent='';
+    
+    if(ct.includes('text/event-stream')){
+      // ── SSE Streaming ──
+      const reader=r.body.getReader();
+      const decoder=new TextDecoder();
+      let buf='';
+      while(true){
+        const{done,value}=await reader.read();
+        if(done)break;
+        buf+=decoder.decode(value,{stream:true});
+        const lines=buf.split('\n');
+        buf=lines.pop();
+        for(const line of lines){
+          if(line.startsWith('data: ')){
+            const d=line.slice(6).trim();
+            if(d&&d!=='[DONE]'){
+              try{
+                const p=JSON.parse(d);
+                const delta=p.choices[0].delta.content||'';
+                if(delta){fullContent+=delta;placeholderSpan.textContent=fullContent;placeholderDiv.scrollIntoView({behavior:'smooth'})}
+              }catch(e){}
+            }
+          }
+        }
+      }
+      setStatus('✅ Listo');
+    }else{
+      // ── Full JSON (cached or fallback) ──
+      const data=await r.json();
+      fullContent=(data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content)||data.content||'[sin respuesta]';
+      placeholderSpan.textContent=fullContent;
+      if(data.cached)setStatus('⚡ Caché');else setStatus('✅ Listo');
+    }
+    
+    if(!fullContent){fullContent='[sin respuesta]';placeholderSpan.textContent=fullContent}
+    
+    // Parse multi-output for teacher mode (client-side)
+    let parsed={};
+    if(currentMode==='teacher'){
+      parsed=parseMultiOutput(fullContent);
+      // Render teacher cards if parsed fields exist
+      const cardsEl=renderTeacherCards(parsed);
+      if(cardsEl){placeholderDiv.innerHTML='';placeholderDiv.appendChild(cardsEl)}
+    }
+    
+    // Add TTS speak button
+    const tb=document.createElement('div');tb.className='msg-toolbar';
+    const spk=document.createElement('button');spk.textContent='🔊 Hablar';
+    spk.onclick=()=>speakTTS(parsed.tts_reading||parsed.text||fullContent);tb.appendChild(spk);
+    const cpy=document.createElement('button');cpy.textContent='📋 Copiar';
+    cpy.onclick=()=>{navigator.clipboard.writeText(fullContent);cpy.textContent='✅';setTimeout(()=>cpy.textContent='📋 Copiar',1500)};tb.appendChild(cpy);
+    placeholderDiv.appendChild(tb);
+    
+    // Add timestamp
+    const ts=document.createElement('div');ts.className='ts';ts.textContent=new Date().toLocaleTimeString();
+    placeholderDiv.appendChild(ts);
+    
+    messageHistory.push(userMsg,{role:'assistant',content:fullContent});
     if(messageHistory.length>20)messageHistory=messageHistory.slice(-20);
-    setStatus(data.cached?'⚡ Caché':'✅ Listo');
-    const tts=parsed.tts_reading||parsed.text||content;
-    if(tts.length<500&&!isRecording)speakTTS(tts);
-  }catch(e){addMsg('assistant','⚠️ '+e.message);setStatus('❌ Error')}
+    
+    const ttsText=parsed.tts_reading||parsed.text||fullContent;
+    if(ttsText.length<500&&!isRecording)speakTTS(ttsText);
+  }catch(e){placeholderSpan.textContent='⚠️ '+e.message;setStatus('❌ Error')}
   isProcessing=false;setThinking(false);
 }
 
